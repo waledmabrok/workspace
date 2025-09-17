@@ -241,6 +241,9 @@ class Session {
   // 🔹 جديد: لتخزين وقت بداية الإيقاف المؤقت
   DateTime? pauseStart;
 
+  // 🔹 جديد: ربط الجلسة بمعرف العميل (nullable)
+  final String? customerId;
+
   Session({
     required this.id,
     required this.name,
@@ -253,8 +256,9 @@ class Session {
     this.elapsedMinutes = 0,
     this.cart = const [],
     required this.type,
-    this.pauseStart, // 🔹 ضيفه هنا
+    this.pauseStart, // 🔹
     this.paidMinutes = 0,
+    this.customerId, // 🔹
   });
 
   Map<String, dynamic> toMap() {
@@ -271,6 +275,7 @@ class Session {
       'type': type,
       'pauseStart': pauseStart?.millisecondsSinceEpoch, // 🔹
       'paidMinutes': paidMinutes,
+      'customerId': customerId, // 🔹
     };
   }
 
@@ -287,14 +292,15 @@ class Session {
       subscription: plan,
       isActive: (map['isActive'] as int) == 1,
       isPaused: (map['isPaused'] as int) == 1,
-      elapsedMinutes: map['elapsedMinutes'] as int,
+      elapsedMinutes: map['elapsedMinutes'] as int? ?? 0,
       cart: [],
       type: map['type'] as String? ?? (plan != null ? "باقة" : "حر"),
       pauseStart:
           map['pauseStart'] != null
               ? DateTime.fromMillisecondsSinceEpoch(map['pauseStart'] as int)
-              : null, // 🔹
+              : null,
       paidMinutes: map['paidMinutes'] as int? ?? 0,
+      customerId: map['customerId'] as String?, // 🔹
     );
   }
 }
@@ -309,6 +315,7 @@ class CartItem {
 
   double get total => product.price * qty;
 }
+
 ///========================Customer====================
 class Customer {
   final String id;
@@ -316,12 +323,7 @@ class Customer {
   String? phone;
   String? notes;
 
-  Customer({
-    required this.id,
-    required this.name,
-    this.phone,
-    this.notes,
-  });
+  Customer({required this.id, required this.name, this.phone, this.notes});
 
   factory Customer.fromMap(Map<String, dynamic> map) {
     return Customer(
@@ -333,12 +335,7 @@ class Customer {
   }
 
   Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'name': name,
-      'phone': phone,
-      'notes': notes,
-    };
+    return {'id': id, 'name': name, 'phone': phone, 'notes': notes};
   }
 }
 
@@ -346,10 +343,7 @@ class CustomerBalance {
   final String customerId;
   double balance;
 
-  CustomerBalance({
-    required this.customerId,
-    required this.balance,
-  });
+  CustomerBalance({required this.customerId, required this.balance});
 
   factory CustomerBalance.fromMap(Map<String, dynamic> map) {
     return CustomerBalance(
@@ -359,10 +353,6 @@ class CustomerBalance {
   }
 
   Map<String, dynamic> toMap() {
-    return {
-      'customerId': customerId,
-      'balance': balance,
-    };
+    return {'customerId': customerId, 'balance': balance};
   }
 }
-

@@ -1,606 +1,7 @@
-/*
-import 'package:flutter/material.dart';
-import '../../core/db_helper_cart.dart';
-import '../../core/models.dart';
-import '../../core/data_service.dart';
-import '../../core/db_helper_sessions.dart';
-import 'dart:async';
-
-class CashierScreen extends StatefulWidget {
-  const CashierScreen({super.key});
-
-  @override
-  State<CashierScreen> createState() => _CashierScreenState();
-}
-
-class _CashierScreenState extends State<CashierScreen> {
-  final TextEditingController _nameCtrl = TextEditingController();
-  final TextEditingController _qtyCtrl = TextEditingController(text: '1');
-  final TextEditingController _searchCtrl = TextEditingController();
-
-  List<Session> _sessions = [];
-  List<Session> _filteredSessions = [];
-
-  Product? _selectedProduct;
-  SubscriptionPlan? _selectedPlan;
-  Session? _selectedSession;
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadSessions();
-    // يحدث الشاشة كل 30 ثانية عشان التوقيت يتجدد
-    _timer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _loadSessions() async {
-    final data = await SessionDb.getSessions();
-    for (var s in data) {
-      s.cart = await CartDb.getCartBySession(s.id);
-      // ⬅️ تحميل الكارت
-    }
-    setState(() {
-      _sessions = data;
-      _filteredSessions = data;
-    });
-  }
-
-  // ✅ حساب الدقايق للجلسة
-  int getSessionMinutes(Session s) {
-    if (s.isPaused) {
-      return s.elapsedMinutes; // محفوظ مسبقاً
-    } else {
-      return s.elapsedMinutes + DateTime.now().difference(s.start).inMinutes;
-    }
-  }
-
-  // ✅ حساب تكلفة الوقت
-  double _calculateTimeChargeFromMinutes(int minutes) {
-    final settings = AdminDataService.instance.pricingSettings;
-    print(
-      "PRICING SETTINGS: "
-      "firstFreeMinutes=${settings.firstFreeMinutes}, "
-      "firstHourFee=${settings.firstHourFee}, "
-      "perHourAfterFirst=${settings.perHourAfterFirst}, "
-      "dailyCap=${settings.dailyCap}",
-    );
-
-    if (minutes <= settings.firstFreeMinutes) return 0;
-    if (minutes <= 60) return settings.firstHourFee;
-
-    final extraHours = ((minutes - 60) / 60).ceil();
-    double amount =
-        settings.firstHourFee + extraHours * settings.perHourAfterFirst;
-    if (amount > settings.dailyCap) amount = settings.dailyCap;
-
-    print("  final amount: $amount");
-    return amount;
-  }
-
-  void _startSession() async {
-    final name = _nameCtrl.text.trim();
-    if (name.isEmpty) return;
-
-    final session = Session(
-      id: generateId(),
-      name: name,
-      start: DateTime.now(),
-      subscription: _selectedPlan,
-      isActive: true,
-      isPaused: false,
-      elapsedMinutes: 0,
-      cart: [],
-    );
-
-    await SessionDb.insertSession(session);
-    setState(() {
-      _sessions.insert(0, session);
-      _filteredSessions = _sessions;
-      _nameCtrl.clear();
-    });
-  }
-
-  void _togglePauseSession(int index) async {
-    final s = _filteredSessions[index];
-    if (!s.isActive) return;
-
-    setState(() {
-      if (s.isPaused) {
-        // استئناف
-        s.isPaused = false;
-        s.start = DateTime.now().subtract(Duration(minutes: s.elapsedMinutes));
-      } else {
-        // إيقاف مؤقت
-        s.isPaused = true;
-        s.elapsedMinutes += DateTime.now().difference(s.start).inMinutes;
-      }
-    });
-
-    await SessionDb.updateSession(s);
-  }
-
-  // ✅ شاشة إضافة منتجات + الدفع
-  Widget _buildAddProductsAndPay(Session s) {
-    Product? selectedProduct;
-    TextEditingController qtyCtrl = TextEditingController(text: '1');
-
-    return StatefulBuilder(
-      builder: (context, setSheetState) {
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // اختيار المنتج
-              DropdownButton<Product>(
-                value: selectedProduct,
-                hint: const Text('اختر منتج/مشروب'),
-                isExpanded: true,
-                items:
-                    AdminDataService.instance.products.map((p) {
-                      return DropdownMenuItem(
-                        value: p,
-                        child: Text('${p.name} (${p.price} ج)'),
-                      );
-                    }).toList(),
-                onChanged: (val) {
-                  setSheetState(() => selectedProduct = val);
-                },
-              ),
-              const SizedBox(height: 8),
-              // إدخال الكمية + زر الإضافة
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: qtyCtrl,
-                      decoration: const InputDecoration(labelText: 'عدد'),
-                      keyboardType: TextInputType.number,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: () async {
-                      final qty = int.tryParse(qtyCtrl.text) ?? 1;
-                      if (selectedProduct != null) {
-                        final item = CartItem(
-                          id: generateId(), // ← هنا
-                          product: selectedProduct!,
-                          qty: qty,
-                        );
-
-                        await CartDb.insertCartItem(item, s.id);
-
-                        final updatedCart = await CartDb.getCartBySession(s.id);
-                        setSheetState(() => s.cart = updatedCart);
-                      }
-                    },
-                    child: const Text('اضف'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              // عرض الكارت مع التحديث المباشر
-              ...s.cart.map((item) {
-                final qtyController = TextEditingController(
-                  text: item.qty.toString(),
-                );
-                return Row(
-                  children: [
-                    Expanded(child: Text(item.product.name)),
-                    SizedBox(
-                      width: 50,
-                      child: TextField(
-                        controller: qtyController,
-                        keyboardType: TextInputType.number,
-                        onChanged: (val) async {
-                          item.qty = int.tryParse(val) ?? item.qty;
-                          await CartDb.updateCartItemQty(item.id, item.qty);
-                          setSheetState(() {});
-                        },
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () async {
-                        await CartDb.deleteCartItem(item.id);
-                        s.cart.remove(item);
-                        setSheetState(() {});
-                      },
-                    ),
-                  ],
-                );
-              }).toList(),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _completeAndPayForSession(s); // الدفع النهائي
-                },
-                child: const Text('إتمام ودفع'),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  // ✅ الدفع + إيصال
-  void _completeAndPayForSession(Session s) async {
-    int totalMinutes = getSessionMinutes(s);
-
-    double timeCharge =
-        s.subscription?.price ?? _calculateTimeChargeFromMinutes(totalMinutes);
-
-    double productsTotal = s.cart.fold(0.0, (sum, item) => sum + item.total);
-
-    await _showReceiptDialog(s, timeCharge, productsTotal);
-  }
-
-  Future<void> _showReceiptDialog(
-    Session s,
-    double timeCharge,
-    double productsTotal,
-  ) async {
-    double discount = 0.0;
-
-    await showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            double finalTotal =
-                timeCharge +
-                s.cart.fold(0.0, (sum, item) => sum + item.total) -
-                discount;
-
-            return AlertDialog(
-              title: Text('إيصال الدفع - ${s.name}'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('وقت الجلسة: ${timeCharge.toStringAsFixed(2)} ج'),
-                    const SizedBox(height: 8),
-                    ...s.cart.map((item) {
-                      final qtyController = TextEditingController(
-                        text: item.qty.toString(),
-                      );
-                      return Row(
-                        children: [
-                          Expanded(child: Text(item.product.name)),
-                          SizedBox(
-                            width: 50,
-                            child: TextField(
-                              controller: qtyController,
-                              keyboardType: TextInputType.number,
-                              onChanged: (val) {
-                                setDialogState(() {
-                                  item.qty = int.tryParse(val) ?? item.qty;
-                                });
-                              },
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () {
-                              setDialogState(() {
-                                s.cart.remove(item);
-                              });
-                            },
-                          ),
-                        ],
-                      );
-                    }).toList(),
-                    const SizedBox(height: 8),
-                    TextField(
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'أدخل خصم (ج)',
-                      ),
-                      onChanged: (val) {
-                        setDialogState(() {
-                          discount = double.tryParse(val) ?? 0.0;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'الإجمالي بعد الخصم: ${finalTotal.toStringAsFixed(2)} ج',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('إلغاء'),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    setState(() {
-                      s.isActive = false;
-                      s.isPaused = false;
-                      s.amountPaid = finalTotal;
-                    });
-
-                    await SessionDb.updateSession(s);
-
-                    AdminDataService.instance.sales.add(
-                      Sale(
-                        id: generateId(),
-                        description:
-                            'جلسة ${s.name} | خطة: ${s.subscription?.name ?? "بدون"} | وقت: ${timeCharge.toStringAsFixed(2)} + منتجات: ${productsTotal.toStringAsFixed(2)} - خصم: ${discount.toStringAsFixed(2)}',
-                        amount: finalTotal,
-                      ),
-                    );
-
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'تم الدفع: ${finalTotal.toStringAsFixed(2)} ج',
-                        ),
-                      ),
-                    );
-                  },
-                  child: const Text('تأكيد الدفع'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('الكاشير'),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_shopping_cart),
-            tooltip: 'إضافة منتجات بدون اسم',
-            onPressed: () async {
-              // نعمل Session افتراضية
-              final tempSession = Session(
-                id: generateId(),
-                name: 'بدون اسم',
-                start: DateTime.now(),
-                subscription: null,
-                isActive: true,
-                isPaused: false,
-                elapsedMinutes: 0,
-                cart: [],
-              );
-
-              // نفتح BottomSheet لإضافة المنتجات
-              await showModalBottomSheet(
-                context: context,
-                builder: (_) => _buildAddProductsAndPay(tempSession),
-              );
-
-              // لو تمت عملية الدفع، ممكن تخزنها كجلسة فعلية أو لا حسب رغبتك
-              if (tempSession.cart.isNotEmpty) {
-                setState(() {
-                  _sessions.insert(0, tempSession);
-                  _filteredSessions = _sessions;
-                });
-              }
-            },
-          ),
-        ],
-      ),
-
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // ✅ البحث عن مشترك
-            TextField(
-              controller: _searchCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'ابحث عن مشترك',
-                labelStyle: const TextStyle(color: Colors.white70),
-                prefixIcon: const Icon(Icons.search, color: Colors.white70),
-                filled: true,
-                fillColor: Colors.grey[850], // خلفية داكنة
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-              onChanged: (val) {
-                setState(() {
-                  _filteredSessions =
-                      val.isEmpty
-                          ? _sessions
-                          : _sessions
-                              .where(
-                                (s) => s.name.toLowerCase().contains(
-                                  val.toLowerCase(),
-                                ),
-                              )
-                              .toList();
-                });
-              },
-            ),
-            const SizedBox(height: 12),
-
-            // ✅ اختيار خطة
-            DropdownButtonFormField<SubscriptionPlan>(
-              value: _selectedPlan,
-              dropdownColor: Colors.grey[850], // خلفية القائمة الداكنة
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: "اختر اشتراك (اختياري)",
-                labelStyle: const TextStyle(color: Colors.white70),
-                filled: true,
-                fillColor: Colors.grey[850],
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-              items:
-                  AdminDataService.instance.subscriptions
-                      .map(
-                        (s) => DropdownMenuItem(
-                          value: s,
-                          child: Text("${s.name} - ${s.price} ج"),
-                        ),
-                      )
-                      .toList(),
-              onChanged: (val) => setState(() => _selectedPlan = val),
-            ),
-            const SizedBox(height: 12),
-
-            // ✅ إدخال اسم عميل + زر تسجيل
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _nameCtrl,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      hintText: 'اسم العميل',
-                      hintStyle: const TextStyle(color: Colors.white70),
-                      filled: true,
-                      fillColor: Colors.grey[850],
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: _startSession,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blueGrey[700],
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 16,
-                    ),
-                  ),
-                  child: const Text('ابدأ تسجيل'),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 12),
-
-            // ✅ قائمة الجلسات
-            Expanded(
-              child: ListView.builder(
-                itemCount: _filteredSessions.length,
-                itemBuilder: (context, i) {
-                  final s = _filteredSessions[i];
-
-                  // ⬅️ اطبع كل القيم المهمة
-                  print('--- Session ${s.name} ---');
-                  print('isActive: ${s.isActive}');
-                  print('isPaused: ${s.isPaused}');
-                  print('start: ${s.start}');
-                  print('elapsedMinutes: ${s.elapsedMinutes}');
-                  print('subscription: ${s.subscription?.name ?? "None"}');
-                  print(
-                    'subscription price: ${s.subscription?.price ?? "N/A"}',
-                  );
-
-                  final spent = getSessionMinutes(s);
-                  print('spentMinutes: $spent');
-
-                  double currentCharge = _calculateTimeChargeFromMinutes(spent);
-                  print('calculated time charge: $currentCharge');
-
-                  String timeInfo;
-                  if (s.subscription != null) {
-                    final spentSub =
-                        DateTime.now().difference(s.start).inMinutes;
-                    timeInfo =
-                        s.end != null
-                            ? "من: ${s.start.toLocal()} ⇢ ينتهي: ${s.end!.toLocal()} ⇢ مضى: ${spentSub} دقيقة"
-                            : "من: ${s.start.toLocal()} ⇢ غير محدود ⇢ مضى: ${spentSub} دقيقة";
-                  } else {
-                    timeInfo = "من: ${s.start.toLocal()} ⇢ مضى: ${spent} دقيقة";
-                  }
-
-                  return Card(
-                    child: ListTile(
-                      title: Text(s.name),
-                      subtitle: Text(
-                        '${s.isActive ? (s.isPaused ? "متوقف مؤقت" : "نشط") : "انتهت"} '
-                        '- $timeInfo '
-                        '- ${s.amountPaid > 0 ? s.amountPaid.toStringAsFixed(2) : currentCharge.toStringAsFixed(2)} ج',
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (s.isActive)
-                            ElevatedButton(
-                              onPressed: () => _togglePauseSession(i),
-                              child: Text(
-                                s.isPaused ? 'استئناف' : 'ايقاف مؤقت',
-                              ),
-                            ),
-                          const SizedBox(width: 4),
-                          if (s.isActive && !s.isPaused)
-                            ElevatedButton(
-                              onPressed: () async {
-                                setState(() => _selectedSession = s);
-                                await showModalBottomSheet(
-                                  context: context,
-                                  builder: (_) => _buildAddProductsAndPay(s),
-                                );
-                              },
-                              child: const Text('اضف & دفع'),
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ✅ Helper
-extension FirstWhereOrNullExtension<E> on List<E> {
-  E? firstWhereOrNull(bool Function(E) test) {
-    for (var element in this) {
-      if (test(element)) return element;
-    }
-    return null;
-  }
-}
-*/
-
 import 'package:flutter/material.dart';
 import '../../core/FinanceDb.dart';
 import '../../core/db_helper_cart.dart';
+import '../../core/db_helper_customers.dart';
 import '../../core/db_helper_discounts.dart';
 import '../../core/models.dart';
 import '../../core/data_service.dart';
@@ -622,8 +23,7 @@ class _CashierScreenState extends State<CashierScreen> {
   final TextEditingController _qtyCtrl = TextEditingController(text: '1');
   final TextEditingController _searchCtrl = TextEditingController();
 
-
-// داخل class _CashierScreenState
+  // داخل class _CashierScreenState
   String get _currentCustomerName {
     // إذا فيه جلسة مختارة، استخدم اسمها، وإلا خذ الاسم من حقل الإدخال
     final fromSelected = _selectedSession?.name;
@@ -669,6 +69,7 @@ class _CashierScreenState extends State<CashierScreen> {
         return null;
     }
   }
+
   double _drawerBalance = 0.0;
 
   Future<void> _loadDrawerBalance() async {
@@ -689,8 +90,9 @@ class _CashierScreenState extends State<CashierScreen> {
   @override
   void initState() {
     super.initState();
-    _currentCustomer = AdminDataService.instance.customers
-        .firstWhereOrNull((c) => c.name == _currentCustomerName);
+    _currentCustomer = AdminDataService.instance.customers.firstWhereOrNull(
+      (c) => c.name == _currentCustomerName,
+    );
     if (mounted) {
       setState(() {});
       _loadDrawerBalance(); // نحافظ على تحديث الرصيد دوريًا
@@ -796,9 +198,68 @@ class _CashierScreenState extends State<CashierScreen> {
     return null; // يعني ناجح
   }
 
+  final TextEditingController _phoneCtrl = TextEditingController();
+
+  // مساعد: احصل على عميل موجود أو أنشئ واحد جديد
+  Future<Customer> _getOrCreateCustomer(String name, String? phone) async {
+    final all = await CustomerDb.getAll();
+    Customer? found;
+    for (final c in all) {
+      if (c.name == name ||
+          (phone != null && phone.isNotEmpty && c.phone == phone)) {
+        found = c;
+        break;
+      }
+    }
+
+    if (found != null) return found;
+
+    final newCustomer = Customer(
+      id: generateId(),
+      name: name,
+      phone: phone,
+      notes: null,
+    );
+
+    await CustomerDb.insert(newCustomer);
+    // لو عندك AdminDataService.instance.customers ممكن تضيفه هناك علطول:
+    try {
+      AdminDataService.instance.customers.add(newCustomer);
+    } catch (_) {}
+    return newCustomer;
+  }
+
+  // الدالة المحسنة _startSession
   void _startSession() async {
     final name = _nameCtrl.text.trim();
-    if (name.isEmpty) return;
+    final phone = _phoneCtrl.text.trim();
+
+    if (name.isEmpty) {
+      // ممكن تعرض Snackbar أو تحط فوكاس على الحقل
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('رجاءً ضع اسم العميل')));
+      return;
+    }
+
+    // === تأكد/انشئ العميل ===
+    Customer? customer;
+    try {
+      customer = await _getOrCreateCustomer(name, phone.isEmpty ? null : phone);
+      _currentCustomer = customer;
+    } catch (e, st) {
+      debugPrint('Failed to get/create customer: $e\n$st');
+      // نمطياً نكمل بدون عميل مسجل (جلسة حر) لكن نعلّم المستخدم
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'فشل حفظ بيانات العميل، سيتم متابعة الجلسة بدون ربط عميل.',
+          ),
+        ),
+      );
+      customer = null;
+      _currentCustomer = null;
+    }
 
     final now = DateTime.now();
     DateTime? end;
@@ -831,7 +292,7 @@ class _CashierScreenState extends State<CashierScreen> {
         }
       }
     } else {
-      // 🔴 جلسة حر
+      // جلسة حر
       end = null;
     }
 
@@ -846,10 +307,12 @@ class _CashierScreenState extends State<CashierScreen> {
       elapsedMinutes: 0,
       cart: [],
       amountPaid: 0.0,
-      type: currentPlan != null ? "باقة" : "حر", // 🔹
+      type: currentPlan != null ? "باقة" : "حر",
+      // لو موديل Session عنده customerId أو customer حطّه هنا لو متاح:
+      // customerId: customer?.id,
     );
 
-    // 🟢 لو فيه خطة اشتراك
+    // لو فيه خطة اشتراك — اعمل عملية بيع سريعة
     if (currentPlan != null) {
       final basePrice = currentPlan.price;
       final discountPercent = _appliedDiscount?.percent ?? 0.0;
@@ -861,38 +324,45 @@ class _CashierScreenState extends State<CashierScreen> {
       final sale = Sale(
         id: generateId(),
         description:
-            'اشتراك ${currentPlan.name} للعميل $name'
+            'اشتراك ${currentPlan.name} للعميل ${name}'
             '${_appliedDiscount != null ? " (خصم ${_appliedDiscount!.percent}%)" : ""}',
         amount: finalPrice,
+        // لو عندك حقل تاريخ داخل Sale، constructor غالباً يضيفه تلقائياً
       );
 
-      await AdminDataService.instance.addSale(
-        sale,
-        paymentMethod: 'cash',
-        customer: _currentCustomer,
-        updateDrawer: true, // سيضيف المبلغ إلى درج الكاشير تلقائيًا
-      );
-
-
-      if (_appliedDiscount?.singleUse == true) {
-        AdminDataService.instance.discounts.removeWhere(
-          (d) => d.id == _appliedDiscount!.id,
-        );
-        _appliedDiscount = null;
-      }
       try {
+        await AdminDataService.instance.addSale(
+          sale,
+          paymentMethod: 'cash',
+          customer: customer, // يمرر id & name إلى DB داخل AdminDataService
+          updateDrawer: true,
+        );
+
+        // لو الكوبون single-use نزيله محليًا
+        if (_appliedDiscount?.singleUse == true) {
+          AdminDataService.instance.discounts.removeWhere(
+            (d) => d.id == _appliedDiscount!.id,
+          );
+          _appliedDiscount = null;
+        }
 
         await _loadDrawerBalance();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'تم دفع اشتراك ${currentPlan.name} (${finalPrice.toStringAsFixed(2)} ج)',
+            ),
+          ),
+        );
       } catch (e, st) {
-        debugPrint('Failed to update drawer after quick sale: $e\n$st');
+        debugPrint('Failed to process quick sale: $e\n$st');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('فشل تسجيل الدفعة — حاول مرة أخرى')),
+        );
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('تم دفع اشتراك ${currentPlan.name} ($finalPrice ج)'),
-        ),
-      );
     }
 
+    // حفظ الجلسة في DB و تحديث الواجهة
     await SessionDb.insertSession(session);
 
     setState(() {
@@ -909,7 +379,9 @@ class _CashierScreenState extends State<CashierScreen> {
                 )
                 .toList();
       }
+
       _nameCtrl.clear();
+      _phoneCtrl.clear();
       _selectedPlan = null;
       _appliedDiscount = null;
       _discountCodeCtrl.clear();
@@ -1092,12 +564,171 @@ class _CashierScreenState extends State<CashierScreen> {
     );
   }
 
+  /*  Future<void> _showReceiptDialog(
+    Session s,
+    double timeCharge,
+    double productsTotal,
+    int minutesToCharge,
+  ) async {
+    double discountValue = 0.0;
+    String? appliedCode;
+    final codeCtrl = TextEditingController();
+    String paymentMethod = "cash";
+    final TextEditingController paidCtrl = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            double finalTotal = timeCharge + productsTotal - discountValue;
+            return AlertDialog(
+              title: Text('إيصال الدفع - ${s.name}'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('وقت الجلسة: ${timeCharge.toStringAsFixed(2)} ج'),
+                    const SizedBox(height: 8),
+                    ...s.cart.map(
+                      (item) => Text(
+                        '${item.product.name} x${item.qty} = ${item.total} ج',
+                      ),
+                    ),
+                    const SizedBox(height: 12), // 🟢 اختيار وسيلة الدفع
+                    Row(
+                      children: [
+                        const Text("طريقة الدفع: "),
+                        const SizedBox(width: 8),
+                        DropdownButton<String>(
+                          value: paymentMethod,
+                          items: const [
+                            DropdownMenuItem(value: "cash", child: Text("كاش")),
+                            DropdownMenuItem(
+                              value: "wallet",
+                              child: Text("محفظة"),
+                            ),
+                          ],
+                          onChanged: (val) {
+                            if (val != null) {
+                              setDialogState(() => paymentMethod = val);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12), // 🟢
+                    // المبلغ المطلوب
+                    Text(
+                      'المطلوب: ${finalTotal.toStringAsFixed(2)} ج',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8), // 🟢 إدخال المبلغ المدفوع
+                    TextField(
+                      controller: paidCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: "المبلغ المدفوع",
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('إلغاء'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    // ✅ المبلغ المطلوب
+                    final requiredAmount = finalTotal; // ✅ المبلغ المدفوع
+                    final paidAmount =
+                        double.tryParse(paidCtrl.text) ?? 0.0; // ✅ الفرق
+                    final diff =
+                        paidAmount - requiredAmount; // ✅ تحديث دقائق الدفع
+                    s.paidMinutes += minutesToCharge;
+                    s.amountPaid += paidAmount; // ✅ تحديث رصيد العميل
+                    if (s.name.isNotEmpty) {
+                      final oldBalance = AdminDataService
+                          .instance
+                          .customerBalances
+                          .firstWhere(
+                            (b) => b.customerId == s.name,
+                            orElse:
+                                () => CustomerBalance(
+                                  customerId: s.name,
+                                  balance: 0,
+                                ),
+                          );
+                      final newBalance = oldBalance.balance + diff;
+                      final updated = CustomerBalance(
+                        customerId: s.name,
+                        balance: newBalance,
+                      );
+                      await CustomerBalanceDb.upsert(updated);
+                      final idx = AdminDataService.instance.customerBalances
+                          .indexWhere((b) => b.customerId == s.name);
+                      if (idx >= 0) {
+                        AdminDataService.instance.customerBalances[idx] =
+                            updated;
+                      } else {
+                        AdminDataService.instance.customerBalances.add(updated);
+                      }
+                    } // ✅ قفل الجلسة
+                    setState(() {
+                      s.isActive = false;
+                      s.isPaused = false;
+                    });
+                    await SessionDb.updateSession(s); // ✅ حفظ كـ
+                    Sale;
+                    final sale = Sale(
+                      id: generateId(),
+                      description:
+                          'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة + منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}'
+                          '${appliedCode != null ? " (بكود $appliedCode)" : ""}',
+                      amount: paidAmount,
+                    );
+                    await AdminDataService.instance.addSale(
+                      sale,
+                      paymentMethod: paymentMethod,
+                      customer: _currentCustomer,
+                      updateDrawer: paymentMethod == "cash",
+                    );
+                    try {
+                      await _loadDrawerBalance();
+                    } catch (e, st) {
+                      debugPrint('Failed to update drawer: $e\n$st');
+                    }
+                    Navigator.pop(context); // ✅ رسالة توضح الفلوس
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          diff == 0
+                              ? '✅ دفع كامل: ${paidAmount.toStringAsFixed(2)} ج'
+                              : diff > 0
+                              ? '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي له ${diff.toStringAsFixed(2)} ج عندك'
+                              : '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي عليك ${(diff.abs()).toStringAsFixed(2)} ج',
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('تأكيد الدفع'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }*/
+
   Future<void> _showReceiptDialog(
-      Session s,
-      double timeCharge,
-      double productsTotal,
-      int minutesToCharge,
-      ) async {
+    Session s,
+    double timeCharge,
+    double productsTotal,
+    int minutesToCharge,
+  ) async {
     double discountValue = 0.0;
     String? appliedCode;
     final codeCtrl = TextEditingController();
@@ -1122,14 +753,13 @@ class _CashierScreenState extends State<CashierScreen> {
                     Text('وقت الجلسة: ${timeCharge.toStringAsFixed(2)} ج'),
                     const SizedBox(height: 8),
                     ...s.cart.map(
-                          (item) => Text(
+                      (item) => Text(
                         '${item.product.name} x${item.qty} = ${item.total} ج',
                       ),
                     ),
-
                     const SizedBox(height: 12),
 
-                    // 🟢 اختيار وسيلة الدفع
+                    // طريقة الدفع
                     Row(
                       children: [
                         const Text("طريقة الدفع: "),
@@ -1138,12 +768,14 @@ class _CashierScreenState extends State<CashierScreen> {
                           value: paymentMethod,
                           items: const [
                             DropdownMenuItem(value: "cash", child: Text("كاش")),
-                            DropdownMenuItem(value: "wallet", child: Text("محفظة")),
+                            DropdownMenuItem(
+                              value: "wallet",
+                              child: Text("محفظة"),
+                            ),
                           ],
                           onChanged: (val) {
-                            if (val != null) {
+                            if (val != null)
                               setDialogState(() => paymentMethod = val);
-                            }
                           },
                         ),
                       ],
@@ -1151,7 +783,7 @@ class _CashierScreenState extends State<CashierScreen> {
 
                     const SizedBox(height: 12),
 
-                    // 🟢 المبلغ المطلوب
+                    // المبلغ المطلوب
                     Text(
                       'المطلوب: ${finalTotal.toStringAsFixed(2)} ج',
                       style: const TextStyle(fontWeight: FontWeight.bold),
@@ -1159,13 +791,41 @@ class _CashierScreenState extends State<CashierScreen> {
 
                     const SizedBox(height: 8),
 
-                    // 🟢 إدخال المبلغ المدفوع
+                    // إدخال المبلغ المدفوع
                     TextField(
                       controller: paidCtrl,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
                         labelText: "المبلغ المدفوع",
                       ),
+                      onChanged: (val) {
+                        setDialogState(
+                          () {},
+                        ); // كل مرة يتغير فيها المبلغ، يحدث الـ dialog
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    // عرض الباقي أو الفائض
+                    Builder(
+                      builder: (_) {
+                        final paidAmount =
+                            double.tryParse(paidCtrl.text) ?? 0.0;
+                        final diff = paidAmount - finalTotal;
+                        String diffText;
+                        if (diff == 0) {
+                          diffText = '✅ دفع كامل';
+                        } else if (diff > 0) {
+                          diffText =
+                              '💰 الباقي للعميل: ${diff.toStringAsFixed(2)} ج';
+                        } else {
+                          diffText =
+                              '💸 على العميل: ${(diff.abs()).toStringAsFixed(2)} ج';
+                        }
+                        return Text(
+                          diffText,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -1177,58 +837,99 @@ class _CashierScreenState extends State<CashierScreen> {
                 ),
                 ElevatedButton(
                   onPressed: () async {
-                    // ✅ المبلغ المطلوب
+                    // required / paid / diff
                     final requiredAmount = finalTotal;
-
-                    // ✅ المبلغ المدفوع
                     final paidAmount = double.tryParse(paidCtrl.text) ?? 0.0;
-
-                    // ✅ الفرق
                     final diff = paidAmount - requiredAmount;
 
-                    // ✅ تحديث دقائق الدفع
+                    // تحديث دقائق الدفع داخل الجلسة
                     s.paidMinutes += minutesToCharge;
                     s.amountPaid += paidAmount;
 
-                    // ✅ تحديث رصيد العميل
-                    if (s.name.isNotEmpty) {
-                      final oldBalance =
-                      AdminDataService.instance.customerBalances.firstWhere(
-                            (b) => b.customerId == s.name,
-                        orElse: () =>
-                            CustomerBalance(customerId: s.name, balance: 0),
-                      );
+                    // ---- تحديث رصيد العميل بشكل صحيح ----
+                    // 1) نحدد customerId الهدف: نفضل s.customerId ثم _currentCustomer
+                    String? targetCustomerId =
+                        s.customerId ?? _currentCustomer?.id;
 
-                      final newBalance = oldBalance.balance + diff;
-
-                      final updated = CustomerBalance(
-                        customerId: s.name,
-                        balance: newBalance,
-                      );
-
-                      await CustomerBalanceDb.upsert(updated);
-
-                      final idx = AdminDataService.instance.customerBalances
-                          .indexWhere((b) => b.customerId == s.name);
-                      if (idx >= 0) {
-                        AdminDataService.instance.customerBalances[idx] = updated;
+                    // 2) لو لسه فاضي حاول نبحث عن العميل بالاسم، وإن لم يوجد - ننشئ واحد جديد
+                    if (targetCustomerId == null || targetCustomerId.isEmpty) {
+                      // حاول إيجاد العميل في DB بحسب الاسم
+                      final found = await CustomerDb.getByName(s.name);
+                      if (found != null) {
+                        targetCustomerId = found.id;
                       } else {
-                        AdminDataService.instance.customerBalances.add(updated);
+                        // لو اسم موجود في الحقل ونفّذنا إنشاء: ننشئ عميل جديد ونتخزن
+                        if (s.name.trim().isNotEmpty) {
+                          final newCustomer = Customer(
+                            id: generateId(),
+                            name: s.name,
+                            phone: null,
+                            notes: null,
+                          );
+                          await CustomerDb.insert(newCustomer);
+                          // حدث الذاكرة المحلية إن وُجد (AdminDataService)
+                          try {
+                            AdminDataService.instance.customers.add(
+                              newCustomer,
+                            );
+                          } catch (_) {}
+                          targetCustomerId = newCustomer.id;
+                        }
                       }
                     }
 
-                    // ✅ قفل الجلسة
+                    if (targetCustomerId != null &&
+                        targetCustomerId.isNotEmpty) {
+                      // احصل الرصيد القديم من الذاكرة (أو استخدم 0)
+                      final oldBalance = AdminDataService
+                          .instance
+                          .customerBalances
+                          .firstWhere(
+                            (b) => b.customerId == targetCustomerId,
+                            orElse:
+                                () => CustomerBalance(
+                                  customerId: targetCustomerId!,
+                                  balance: 0.0,
+                                ),
+                          );
+
+                      final newBalance = oldBalance.balance + diff;
+                      final updated = CustomerBalance(
+                        customerId: targetCustomerId,
+                        balance: newBalance,
+                      );
+
+                      // اكتب للـ DB
+                      await CustomerBalanceDb.upsert(updated);
+
+                      // حدّث الذاكرة (AdminDataService)
+                      final idx = AdminDataService.instance.customerBalances
+                          .indexWhere((b) => b.customerId == targetCustomerId);
+                      if (idx >= 0) {
+                        AdminDataService.instance.customerBalances[idx] =
+                            updated;
+                      } else {
+                        AdminDataService.instance.customerBalances.add(updated);
+                      }
+                    } else {
+                      // لم نتمكن من إيجاد/إنشاء عميل --> تسجّل ملاحظۀ debug
+                      debugPrint(
+                        'No customer id for session ${s.id}; balance not updated.',
+                      );
+                    }
+
+                    // ---- قفل الجلسة وتحديث DB ----
                     setState(() {
                       s.isActive = false;
                       s.isPaused = false;
                     });
                     await SessionDb.updateSession(s);
 
-                    // ✅ حفظ كـ Sale
+                    // ---- حفظ المبيعة ----
                     final sale = Sale(
                       id: generateId(),
                       description:
-                      'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة + منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}'
+                          'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة + منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}'
                           '${appliedCode != null ? " (بكود $appliedCode)" : ""}',
                       amount: paidAmount,
                     );
@@ -1248,7 +949,7 @@ class _CashierScreenState extends State<CashierScreen> {
 
                     Navigator.pop(context);
 
-                    // ✅ رسالة توضح الفلوس
+                    // إشعار للمستخدم (باقي/له/عليه)
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
@@ -1270,7 +971,6 @@ class _CashierScreenState extends State<CashierScreen> {
       },
     );
   }
-
 
   List<Session> getExpiringSessions() {
     final now = DateTime.now();
@@ -1305,15 +1005,26 @@ class _CashierScreenState extends State<CashierScreen> {
 
           backgroundColor: Colors.transparent,
           elevation: 0,
-          actions: [// داخل AppBar.actions: ضع هذا قبل الأيقونات الأخرى أو بعدهم
+          actions: [
+            // داخل AppBar.actions: ضع هذا قبل الأيقونات الأخرى أو بعدهم
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 1),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  const Text('رصيد الدرج', style: TextStyle(fontSize: 11, color: Colors.white70)),
-                  Text('${_drawerBalance.toStringAsFixed(2)} ج', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
+                  const Text(
+                    'رصيد الدرج',
+                    style: TextStyle(fontSize: 11, color: Colors.white70),
+                  ),
+                  Text(
+                    '${_drawerBalance.toStringAsFixed(2)} ج',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -1432,7 +1143,6 @@ class _CashierScreenState extends State<CashierScreen> {
               ],
             ),
           ],
-
         ),
         body: Padding(
           padding: const EdgeInsets.all(16),
@@ -1741,73 +1451,6 @@ class _CashierScreenState extends State<CashierScreen> {
   }
 
   /// 🔹 دالة تبني لستة المشتركين
-  Widget _buildSubscribersList2({required bool withPlan}) {
-    final filtered =
-        _filteredSessions.where((s) {
-          if (withPlan) {
-            // مشترك باقة: عنده subscription ومعاه end أو Unlimited plan
-            return s.subscription != null &&
-                (s.end != null || s.subscription!.isUnlimited);
-          } else {
-            // حر: أي جلسة مفيهاش اشتراك
-            return s.subscription == null;
-          }
-        }).toList();
-
-    if (filtered.isEmpty) {
-      return const Center(child: Text("لا يوجد بيانات"));
-    }
-
-    return ListView.builder(
-      itemCount: filtered.length,
-      itemBuilder: (context, i) {
-        final s = filtered[i];
-        final spentMinutes = getSessionMinutes(s);
-        final endTime = getSubscriptionEnd(s);
-
-        String timeInfo;
-        if (s.subscription != null) {
-          timeInfo =
-              endTime != null
-                  ? "من: ${s.start.toLocal()} ⇢ ينتهي: ${endTime.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة"
-                  : "من: ${s.start.toLocal()} ⇢ غير محدود ⇢ مضى: ${spentMinutes} دقيقة";
-        } else {
-          timeInfo = "من: ${s.start.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة";
-        }
-
-        return Card(
-          child: ListTile(
-            title: Text(s.name),
-            subtitle: Text(
-              '${s.isActive ? (s.isPaused ? "متوقف مؤقت" : "نشط") : "انتهت"} - $timeInfo',
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (s.isActive)
-                  ElevatedButton(
-                    onPressed: () => _togglePauseSession(i),
-                    child: Text(s.isPaused ? 'استئناف' : 'ايقاف مؤقت'),
-                  ),
-                const SizedBox(width: 4),
-                if (s.isActive && !s.isPaused)
-                  ElevatedButton(
-                    onPressed: () async {
-                      setState(() => _selectedSession = s);
-                      await showModalBottomSheet(
-                        context: context,
-                        builder: (_) => _buildAddProductsAndPay(s),
-                      );
-                    },
-                    child: const Text('اضف & دفع'),
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
 
   Widget _buildSubscribersList({required bool withPlan}) {
     // فلترة مباشرة من _sessions
@@ -1960,13 +1603,15 @@ class _CashierScreenState extends State<CashierScreen> {
                         sale,
                         paymentMethod: 'cash',
                         customer: _currentCustomer,
-                        updateDrawer: true, // سيضيف المبلغ إلى درج الكاشير تلقائيًا
+                        updateDrawer:
+                            true, // سيضيف المبلغ إلى درج الكاشير تلقائيًا
                       );
                       try {
-
                         await _loadDrawerBalance();
                       } catch (e, st) {
-                        debugPrint('Failed to update drawer after quick sale: $e\n$st');
+                        debugPrint(
+                          'Failed to update drawer after quick sale: $e\n$st',
+                        );
                       }
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -1985,68 +1630,6 @@ class _CashierScreenState extends State<CashierScreen> {
       },
     );
   }
-
-  /*  Widget _buildSubscribersList({String? type}) {
-    // type = "باقة" → فقط المشتركين بالباقة
-    // type = "حر" → المشتركين الحر
-    // null → كل المشتركين
-
-    final filtered =
-        _filteredSessions.where((s) {
-          if (type == "باقة") return s.subscription != null;
-          if (type == "حر") return s.subscription == null;
-          return true; // كل المشتركين
-        }).toList();
-
-    if (filtered.isEmpty) return const Center(child: Text("لا يوجد بيانات"));
-
-    return ListView.builder(
-      itemCount: filtered.length,
-      itemBuilder: (context, i) {
-        final s = filtered[i];
-        final spentMinutes = getSessionMinutes(s);
-        final endTime = getSubscriptionEnd(s);
-
-        String timeInfo =
-            s.subscription != null
-                ? (endTime != null
-                    ? "من: ${s.start.toLocal()} ⇢ ينتهي: ${endTime.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة"
-                    : "من: ${s.start.toLocal()} ⇢ غير محدود ⇢ مضى: ${spentMinutes} دقيقة")
-                : "من: ${s.start.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة";
-
-        return Card(
-          child: ListTile(
-            title: Text(s.name),
-            subtitle: Text(
-              '${s.isActive ? (s.isPaused ? "متوقف مؤقت" : "نشط") : "انتهت"} - $timeInfo',
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (s.isActive)
-                  ElevatedButton(
-                    onPressed: () => _togglePauseSession(i),
-                    child: Text(s.isPaused ? 'استئناف' : 'ايقاف مؤقت'),
-                  ),
-                const SizedBox(width: 4),
-                if (s.isActive && !s.isPaused)
-                  ElevatedButton(
-                    onPressed: () async {
-                      setState(() => _selectedSession = s);
-                      await showModalBottomSheet(
-                        context: context,
-                        builder: (_) => _buildAddProductsAndPay(s),
-                      );
-                    },
-                    child: const Text('اضف & دفع'),
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }*/
 
   /// 🔹 دالة المنتجات المباعة
   Widget _buildSalesList() {
