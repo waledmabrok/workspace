@@ -327,18 +327,83 @@ class _CashierScreenState extends State<CashierScreen> {
             'اشتراك ${currentPlan.name} للعميل ${name}'
             '${_appliedDiscount != null ? " (خصم ${_appliedDiscount!.percent}%)" : ""}',
         amount: finalPrice,
-        // لو عندك حقل تاريخ داخل Sale، constructor غالباً يضيفه تلقائياً
       );
 
       try {
         await AdminDataService.instance.addSale(
           sale,
           paymentMethod: 'cash',
-          customer: customer, // يمرر id & name إلى DB داخل AdminDataService
+          customer: customer,
           updateDrawer: true,
         );
 
-        // لو الكوبون single-use نزيله محليًا
+        // 🟢 هنا نطبع/نعرض تفاصيل الباقة
+        final nowStr = now.toLocal().toString();
+        final endStr = end?.toLocal().toString() ?? "غير محدود";
+
+        String durationInfo;
+        switch (currentPlan.durationType) {
+          case "hour":
+            durationInfo = "تنتهي بعد ${currentPlan.durationValue} ساعة";
+            break;
+          case "day":
+            durationInfo = "تنتهي بعد ${currentPlan.durationValue} يوم";
+            break;
+          case "week":
+            durationInfo = "تنتهي بعد ${currentPlan.durationValue} أسبوع";
+            break;
+          case "month":
+            durationInfo = "تنتهي بعد ${currentPlan.durationValue} شهر";
+            break;
+          default:
+            durationInfo = currentPlan.isUnlimited ? "غير محدودة" : "غير معروف";
+        }
+
+        // لو عندك حد يومي
+        String dailyLimitInfo = "";
+        if (currentPlan.dailyUsageType == "limited") {
+          dailyLimitInfo =
+              "\nحد الاستخدام اليومي: ${currentPlan.dailyUsageHours} دقيقة";
+        }
+
+        debugPrint("""
+====== تفاصيل الاشتراك ======
+العميل: $name
+الباقة: ${currentPlan.name}
+السعر الأساسي: $basePrice ج
+الخصم: $discountPercent% ($discountValue ج)
+المطلوب: $finalPrice ج
+بدأت: $nowStr
+${durationInfo != "" ? "المدة: $durationInfo" : ""}
+تنتهي: $endStr
+$dailyLimitInfo
+=============================
+""");
+
+        // ممكن تعرضها كـ Dialog بدل الطباعة:
+        await showDialog(
+          context: context,
+          builder:
+              (_) => AlertDialog(
+                title: Text("تفاصيل اشتراك ${currentPlan.name}"),
+                content: Text(
+                  "العميل: $name\n"
+                  "السعر: ${finalPrice.toStringAsFixed(2)} ج\n"
+                  "بدأت: $nowStr\n"
+                  "تنتهي: $endStr\n"
+                  "$durationInfo\n"
+                  "$dailyLimitInfo",
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text("تمام"),
+                  ),
+                ],
+              ),
+        );
+
+        // 🔻 باقي الكود كما هو
         if (_appliedDiscount?.singleUse == true) {
           AdminDataService.instance.discounts.removeWhere(
             (d) => d.id == _appliedDiscount!.id,
@@ -562,6 +627,29 @@ class _CashierScreenState extends State<CashierScreen> {
         backgroundColor: Colors.orange,
       ),
     );
+  }
+
+  /// دقائق الجلسة داخل نفس اليوم (من بداية اليوم حتى الآن أو end إذا أسبق)
+  int getSessionMinutesToday(Session s) {
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+    final todayEnd = todayStart.add(const Duration(days: 1));
+
+    final sessionStart = s.start.isBefore(todayStart) ? todayStart : s.start;
+    // لو الجلسة لها end داخل اليوم خده، وإلا خُد الآن
+    final sessionEnd = (s.end != null && s.end!.isBefore(now)) ? s.end! : now;
+
+    if (sessionEnd.isBefore(todayStart)) return 0;
+    if (sessionStart.isAfter(todayEnd)) return 0;
+
+    return sessionEnd.difference(sessionStart).inMinutes;
+  }
+
+  int allowedMinutesTodayForPlan(SubscriptionPlan? plan) {
+    if (plan == null) return -1;
+    if (plan.dailyUsageType != 'limited' || plan.dailyUsageHours == null)
+      return -1;
+    return plan.dailyUsageHours! * 60; // تحويل ساعات إلى دقائق
   }
 
   /*  Future<void> _showReceiptDialog(
@@ -831,10 +919,88 @@ class _CashierScreenState extends State<CashierScreen> {
                 ),
               ),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('إلغاء'),
+                // داخل actions: []
+                ElevatedButton(
+                  onPressed: () async {
+                    final paidAmount = double.tryParse(paidCtrl.text) ?? 0.0;
+                    final diff = paidAmount - finalTotal;
+                    if (paidAmount < finalTotal) {
+                      // رسالة تحذير: المبلغ أقل من المطلوب
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('⚠️ المبلغ المدفوع أقل من المطلوب.'),
+                        ),
+                      );
+                      return; // لا يتم تنفيذ أي شيء
+                    }
+                    if (diff > 0) {
+                      // خصم الفائض من الدرج
+                      await AdminDataService.instance.addSale(
+                        Sale(
+                          id: generateId(),
+                          description: 'سداد الباقي كاش للعميل',
+                          amount: diff,
+                        ),
+                        paymentMethod: 'cash',
+                        updateDrawer: true,
+                        drawerDelta: -diff, // خصم من الدرج بدل الإضافة
+                      );
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            '💵 أخذ العميل باقي ${diff.toStringAsFixed(2)} ج كاش من الدرج',
+                          ),
+                        ),
+                      );
+                    }
+
+                    // تحديث دقائق الدفع
+                    s.paidMinutes += minutesToCharge;
+                    s.amountPaid += paidAmount;
+
+                    // ---- قفل الجلسة وتحديث DB ----
+                    setState(() {
+                      s.isActive = false;
+                      s.isPaused = false;
+                    });
+                    await SessionDb.updateSession(s);
+
+                    // حفظ المبيعة كما هي
+                    final sale = Sale(
+                      id: generateId(),
+                      description:
+                          'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة + منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}',
+                      amount: paidAmount,
+                    );
+
+                    await AdminDataService.instance.addSale(
+                      sale,
+                      paymentMethod: paymentMethod,
+                      customer: _currentCustomer,
+                      updateDrawer: paymentMethod == "cash",
+                    );
+
+                    try {
+                      await _loadDrawerBalance();
+                    } catch (e, st) {
+                      debugPrint('Failed to update drawer: $e\n$st');
+                    }
+
+                    Navigator.pop(context);
+
+                    // إشعار للمستخدم بأن الباقي أخذ كاش
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          '💵 الباقي ${diff > 0 ? diff.toStringAsFixed(2) : 0} ج أخذ كاش',
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('تأكيد الدفع بالكامل'),
                 ),
+
                 ElevatedButton(
                   onPressed: () async {
                     // required / paid / diff
@@ -962,7 +1128,11 @@ class _CashierScreenState extends State<CashierScreen> {
                       ),
                     );
                   },
-                  child: const Text('تأكيد الدفع'),
+                  child: const Text('علي الحساب'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('إلغاء'),
                 ),
               ],
             );
@@ -995,6 +1165,71 @@ class _CashierScreenState extends State<CashierScreen> {
         getExpiringSessions().length + getExpiredSessions().length;
   }
 
+  Future<void> _closeShift() async {
+    // 1. احسب المبيعات للشيفت فقط للجلسات اللي خلصت أو المنتجات اللي مدفوعة
+    final cashSales = AdminDataService.instance.sales
+        .where((s) => s.paymentMethod == 'cash')
+        .fold(0.0, (sum, s) => sum + s.amount);
+
+    final walletSales = AdminDataService.instance.sales
+        .where((s) => s.paymentMethod == 'wallet')
+        .fold(0.0, (sum, s) => sum + s.amount);
+
+    // 2. احسب المصاريف
+    final expenses = AdminDataService.instance.expenses.fold(
+      0.0,
+      (sum, e) => sum + e.amount,
+    );
+
+    // 3. الرصيد الحالي للدرج
+    final drawer = AdminDataService.instance.drawerBalance;
+
+    // 4. عرض ملخص للمستخدم
+    await showDialog(
+      context: context,
+      builder:
+          (_) => AlertDialog(
+            title: const Text('ملخص الشيفت'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('إجمالي مبيعات كاش: ${cashSales.toStringAsFixed(2)} ج'),
+                Text(
+                  'إجمالي مبيعات محفظة: ${walletSales.toStringAsFixed(2)} ج',
+                ),
+                Text('إجمالي مصاريف: ${expenses.toStringAsFixed(2)} ج'),
+                Text('رصيد الدرج الحالي: ${drawer.toStringAsFixed(2)} ج'),
+                Text(
+                  'الربح: ${(cashSales + walletSales - expenses).toStringAsFixed(2)} ج',
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('إغلاق'),
+              ),
+            ],
+          ),
+    );
+
+    // 5. تهيئة الشيفت الجديد بدون حذف الجلسات النشطة
+    setState(() {
+      _sessions = _sessions.where((s) => s.isActive).toList();
+
+      // مسح المبيعات والمصاريف للشيفت السابق فقط
+      AdminDataService.instance.sales.clear();
+      AdminDataService.instance.expenses.clear();
+
+      // تحديث رصيد الدرج للبدء من الصفر أو حسب رغبتك
+      //   AdminDataService.instance.drawerBalance = 0.0;
+    });
+
+    // 6. احفظ التغييرات في DB
+    // await FinanceDb.setDrawerBalance(0.0);
+  }
+
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
@@ -1007,28 +1242,55 @@ class _CashierScreenState extends State<CashierScreen> {
           elevation: 0,
           actions: [
             // داخل AppBar.actions: ضع هذا قبل الأيقونات الأخرى أو بعدهم
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 1),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  const Text(
-                    'رصيد الدرج',
-                    style: TextStyle(fontSize: 11, color: Colors.white70),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                const Text(
+                  'رصيد الدرج',
+                  style: TextStyle(fontSize: 11, color: Colors.white70),
+                ),
+                Text(
+                  '${_drawerBalance.toStringAsFixed(2)} ج',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
                   ),
-                  Text(
-                    '${_drawerBalance.toStringAsFixed(2)} ج',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
+            IconButton(
+              icon: const Icon(Icons.lock_clock),
+              tooltip: 'تقفيل الشيفت',
+              onPressed: () async {
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder:
+                      (_) => AlertDialog(
+                        title: const Text('تأكيد تقفيل الشيفت'),
+                        content: const Text(
+                          'هل تريد إنهاء الشيفت وحساب كل الإيرادات؟',
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, false),
+                            child: const Text('إلغاء'),
+                          ),
+                          ElevatedButton(
+                            onPressed: () => Navigator.pop(context, true),
+                            child: const Text('تأكيد'),
+                          ),
+                        ],
+                      ),
+                );
 
+                if (confirm != true) return;
+
+                // استدعاء دالة تقفيل الشيفت
+                await _closeShift();
+              },
+            ),
             IconButton(
               icon: const Icon(Icons.add_shopping_cart),
               tooltip: 'إضافة منتجات بدون اسم',

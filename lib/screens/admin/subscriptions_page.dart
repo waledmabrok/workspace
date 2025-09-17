@@ -156,8 +156,8 @@ import 'package:flutter/material.dart';
 import 'dart:math';
 import '../../core/data_service.dart'; // <-- هذا يضيف AdminDataService
 
-import '../../core/db_helper_Subscribe.dart';   // الكلاس اللي عامل فيه SQLite
-import '../../core/models.dart';      // فيه SubscriptionPlan
+import '../../core/db_helper_Subscribe.dart'; // الكلاس اللي عامل فيه SQLite
+import '../../core/models.dart'; // فيه SubscriptionPlan
 
 // ------------------------- Subscriptions Page (CRUD) -------------------------
 class SubscriptionsPage extends StatefulWidget {
@@ -264,7 +264,9 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
       builder: (_) => SubscriptionDialog(plan: p),
     );
     if (res != null) {
-      final index = AdminDataService.instance.subscriptions.indexWhere((s) => s.id == res.id);
+      final index = AdminDataService.instance.subscriptions.indexWhere(
+        (s) => s.id == res.id,
+      );
       if (index != -1) {
         AdminDataService.instance.subscriptions[index] = res;
       }
@@ -273,16 +275,13 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
     }
   }
 
-
   void _deletePlan(SubscriptionPlan p) async {
     await SubscriptionDb.deletePlan(p.id);
 
-    AdminDataService.instance.subscriptions
-        .removeWhere((s) => s.id == p.id);
+    AdminDataService.instance.subscriptions.removeWhere((s) => s.id == p.id);
 
     _loadPlans();
   }
-
 }
 
 // ------------------------- Dialog -------------------------
@@ -308,9 +307,7 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
   void initState() {
     super.initState();
     _name = TextEditingController(text: widget.plan?.name ?? '');
-    _price = TextEditingController(
-      text: widget.plan?.price.toString() ?? '0',
-    );
+    _price = TextEditingController(text: widget.plan?.price.toString() ?? '0');
     _durationType = widget.plan?.durationType ?? "hour";
     _durationValue = TextEditingController(
       text: widget.plan?.durationValue?.toString() ?? '',
@@ -337,16 +334,15 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
               value: _durationType,
-              items: ['hour', 'day', 'week', 'month', 'unlimited']
-                  .map((e) => DropdownMenuItem(
-                value: e,
-                child: Text(e),
-              ))
-                  .toList(),
-              onChanged: (val) => setState(() {
-                _durationType = val!;
-                _isUnlimited = (val == "unlimited");
-              }),
+              items:
+                  ['hour', 'day', 'week', 'month', 'unlimited']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+              onChanged:
+                  (val) => setState(() {
+                    _durationType = val!;
+                    _isUnlimited = (val == "unlimited");
+                  }),
               decoration: const InputDecoration(labelText: 'نوع المدة'),
             ),
             if (!_isUnlimited)
@@ -370,9 +366,10 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
                 DropdownMenuItem(value: "full", child: Text("مفتوح طول اليوم")),
                 DropdownMenuItem(value: "limited", child: Text("ساعات محدودة")),
               ],
-              onChanged: (val) => setState(() {
-                _dailyUsageType = val!;
-              }),
+              onChanged:
+                  (val) => setState(() {
+                    _dailyUsageType = val!;
+                  }),
               decoration: const InputDecoration(labelText: 'الاستخدام اليومي'),
             ),
 
@@ -380,8 +377,9 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
               TextField(
                 controller: _dailyHours,
                 keyboardType: TextInputType.number,
-                decoration:
-                const InputDecoration(labelText: 'عدد الساعات في اليوم'),
+                decoration: const InputDecoration(
+                  labelText: 'عدد الساعات في اليوم',
+                ),
               ),
           ],
         ),
@@ -397,7 +395,6 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
             final price = double.tryParse(_price.text) ?? 0.0;
             final durationVal = int.tryParse(_durationValue.text);
             final dailyHours = int.tryParse(_dailyHours.text);
-
             if (name.isEmpty) return;
 
             final plan = SubscriptionPlan(
@@ -407,8 +404,7 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
               durationValue: _isUnlimited ? null : durationVal,
               price: price,
               dailyUsageType: _dailyUsageType,
-              dailyUsageHours:
-              _dailyUsageType == "limited" ? dailyHours : null,
+              dailyUsageHours: _dailyUsageType == "limited" ? dailyHours : null,
               isUnlimited: _isUnlimited,
             );
 
@@ -420,4 +416,3 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
     );
   }
 }
-

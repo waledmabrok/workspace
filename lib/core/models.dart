@@ -150,15 +150,17 @@ class Sale {
   final String id;
   String description;
   double amount;
-  double discount; // 🟢 جديد
+  double discount;
   DateTime date;
+  String paymentMethod; // ← أضف هذا الحقل
 
   Sale({
     required this.id,
     required this.description,
     required this.amount,
-    this.discount = 0.0, // default لو مفيش خصم
+    this.discount = 0.0,
     DateTime? date,
+    this.paymentMethod = 'cash', // افتراضي كاش
   }) : date = date ?? DateTime.now();
 
   Map<String, dynamic> toMap() {
@@ -168,6 +170,7 @@ class Sale {
       'amount': amount,
       'discount': discount,
       'date': date.millisecondsSinceEpoch,
+      'paymentMethod': paymentMethod, // حفظه في DB
     };
   }
 
@@ -178,6 +181,7 @@ class Sale {
       amount: (map['amount'] as num).toDouble(),
       discount: (map['discount'] as num?)?.toDouble() ?? 0.0,
       date: DateTime.fromMillisecondsSinceEpoch(map['date']),
+      paymentMethod: map['paymentMethod'] ?? 'cash',
     );
   }
 }
