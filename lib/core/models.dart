@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 String generateId() => DateTime.now().millisecondsSinceEpoch.toString();
 
 /// ---------------- SubscriptionPlan ----------------
+
 class SubscriptionPlan {
   String id;
   String name;
@@ -14,6 +15,7 @@ class SubscriptionPlan {
   int? dailyUsageHours;
   Map<String, int>? weeklyHours;
   bool isUnlimited;
+  DateTime? endDate; // ✅ جديد
 
   SubscriptionPlan({
     required this.id,
@@ -25,6 +27,7 @@ class SubscriptionPlan {
     this.dailyUsageHours,
     this.weeklyHours,
     this.isUnlimited = false,
+    this.endDate, // ✅ جديد
   });
 
   /// ✅ للتخزين في SQLite
@@ -38,6 +41,7 @@ class SubscriptionPlan {
     'dailyUsageHours': dailyUsageHours,
     'weeklyHours': weeklyHours != null ? jsonEncode(weeklyHours) : null,
     'isUnlimited': isUnlimited ? 1 : 0,
+    'endDate': endDate?.millisecondsSinceEpoch, // ✅ جديد
   };
 
   factory SubscriptionPlan.fromMap(Map<String, dynamic> map) =>
@@ -54,6 +58,10 @@ class SubscriptionPlan {
                 ? Map<String, int>.from(jsonDecode(map['weeklyHours']))
                 : null,
         isUnlimited: map['isUnlimited'] == 1,
+        endDate:
+            map['endDate'] != null
+                ? DateTime.fromMillisecondsSinceEpoch(map['endDate'])
+                : null, // ✅ جديد
       );
 
   /// ✅ للتخزين في SharedPreferences (jsonEncode/jsonDecode)
@@ -67,6 +75,7 @@ class SubscriptionPlan {
     'dailyUsageHours': dailyUsageHours,
     'weeklyHours': weeklyHours,
     'isUnlimited': isUnlimited,
+    'endDate': endDate?.toIso8601String(), // ✅ جديد
   };
 
   factory SubscriptionPlan.fromJson(Map<String, dynamic> json) =>
@@ -83,6 +92,10 @@ class SubscriptionPlan {
                 ? Map<String, int>.from(json['weeklyHours'])
                 : null,
         isUnlimited: json['isUnlimited'] ?? false,
+        endDate:
+            json['endDate'] != null
+                ? DateTime.parse(json['endDate'])
+                : null, // ✅ جديد
       );
 }
 
@@ -152,7 +165,11 @@ class Sale {
   double amount;
   double discount;
   DateTime date;
-  String paymentMethod; // ← أضف هذا الحقل
+
+  // حقول إضافية للتوافق مع DB وأغراض التقارير
+  String paymentMethod; // 'cash' | 'wallet' | 'balance' | ...
+  String? customerId;
+  String? customerName;
 
   Sale({
     required this.id,
@@ -160,7 +177,9 @@ class Sale {
     required this.amount,
     this.discount = 0.0,
     DateTime? date,
-    this.paymentMethod = 'cash', // افتراضي كاش
+    this.paymentMethod = 'cash',
+    this.customerId,
+    this.customerName,
   }) : date = date ?? DateTime.now();
 
   Map<String, dynamic> toMap() {
@@ -170,18 +189,25 @@ class Sale {
       'amount': amount,
       'discount': discount,
       'date': date.millisecondsSinceEpoch,
-      'paymentMethod': paymentMethod, // حفظه في DB
+      'paymentMethod': paymentMethod,
+      'customerId': customerId,
+      'customerName': customerName,
     };
   }
 
   factory Sale.fromMap(Map<String, dynamic> map) {
     return Sale(
-      id: map['id'],
-      description: map['description'],
-      amount: (map['amount'] as num).toDouble(),
+      id: map['id'] as String,
+      description: map['description'] as String? ?? '',
+      amount: (map['amount'] as num?)?.toDouble() ?? 0.0,
       discount: (map['discount'] as num?)?.toDouble() ?? 0.0,
-      date: DateTime.fromMillisecondsSinceEpoch(map['date']),
-      paymentMethod: map['paymentMethod'] ?? 'cash',
+      date:
+          map['date'] != null
+              ? DateTime.fromMillisecondsSinceEpoch(map['date'] as int)
+              : DateTime.now(),
+      paymentMethod: map['paymentMethod'] as String? ?? 'cash',
+      customerId: map['customerId'] as String?,
+      customerName: map['customerName'] as String?,
     );
   }
 }
@@ -228,6 +254,8 @@ class Discount {
 }
 
 /// ---------------- Session ----------------
+// داخل models.dart — تعديل/استبدال class Session الموجود عندك
+
 class Session {
   final String id;
   final String name;
@@ -241,12 +269,16 @@ class Session {
   List<CartItem> cart;
   String type; // "باقة" أو "حر"
   int paidMinutes; // عدد الدقائق المدفوعة مسبقًا
-
-  // 🔹 جديد: لتخزين وقت بداية الإيقاف المؤقت
   DateTime? pauseStart;
-
-  // 🔹 جديد: ربط الجلسة بمعرف العميل (nullable)
   final String? customerId;
+
+  // ===== جديد: سجل الأحداث (timeline) محفوظ كـ List of maps ثم يُسجل في DB JSON =====
+  List<Map<String, dynamic>> events;
+
+  // حقول استكمال الباقة (قد تكون موجودة عندك سابقًا — احتفظ بها)
+  String? savedSubscriptionJson;
+  bool? resumeNextDayRequested;
+  DateTime? resumeDate;
 
   Session({
     required this.id,
@@ -260,9 +292,13 @@ class Session {
     this.elapsedMinutes = 0,
     this.cart = const [],
     required this.type,
-    this.pauseStart, // 🔹
+    this.pauseStart,
     this.paidMinutes = 0,
-    this.customerId, // 🔹
+    this.customerId,
+    this.events = const [], // جديد: افتراضيًا فاضية
+    this.savedSubscriptionJson,
+    this.resumeNextDayRequested,
+    this.resumeDate,
   });
 
   Map<String, dynamic> toMap() {
@@ -277,13 +313,31 @@ class Session {
       'isPaused': isPaused ? 1 : 0,
       'elapsedMinutes': elapsedMinutes,
       'type': type,
-      'pauseStart': pauseStart?.millisecondsSinceEpoch, // 🔹
+      'pauseStart': pauseStart?.millisecondsSinceEpoch,
       'paidMinutes': paidMinutes,
-      'customerId': customerId, // 🔹
+      'customerId': customerId,
+      // ===== حفظ events كـ JSON =====
+      'events': events.isNotEmpty ? jsonEncode(events) : null,
+      'savedSubscriptionJson': savedSubscriptionJson,
+      'resumeNextDayRequested': resumeNextDayRequested == true ? 1 : 0,
+      'resumeDate': resumeDate?.millisecondsSinceEpoch,
     };
   }
 
   factory Session.fromMap(Map<String, dynamic> map, {SubscriptionPlan? plan}) {
+    List<Map<String, dynamic>> parsedEvents = [];
+    try {
+      if (map['events'] != null) {
+        final raw = map['events'] as String;
+        final dec = jsonDecode(raw);
+        if (dec is List) {
+          parsedEvents = List<Map<String, dynamic>>.from(dec);
+        }
+      }
+    } catch (_) {
+      parsedEvents = [];
+    }
+
     return Session(
       id: map['id'] as String,
       name: map['name'] as String,
@@ -294,8 +348,8 @@ class Session {
               : null,
       amountPaid: (map['amountPaid'] as num?)?.toDouble() ?? 0.0,
       subscription: plan,
-      isActive: (map['isActive'] as int) == 1,
-      isPaused: (map['isPaused'] as int) == 1,
+      isActive: (map['isActive'] as int?) == 1,
+      isPaused: (map['isPaused'] as int?) == 1,
       elapsedMinutes: map['elapsedMinutes'] as int? ?? 0,
       cart: [],
       type: map['type'] as String? ?? (plan != null ? "باقة" : "حر"),
@@ -304,9 +358,28 @@ class Session {
               ? DateTime.fromMillisecondsSinceEpoch(map['pauseStart'] as int)
               : null,
       paidMinutes: map['paidMinutes'] as int? ?? 0,
-      customerId: map['customerId'] as String?, // 🔹
+      customerId: map['customerId'] as String?,
+      events: parsedEvents,
+      savedSubscriptionJson: map['savedSubscriptionJson'] as String?,
+      resumeNextDayRequested: (map['resumeNextDayRequested'] as int?) == 1,
+      resumeDate:
+          map['resumeDate'] != null
+              ? DateTime.fromMillisecondsSinceEpoch(map['resumeDate'] as int)
+              : null,
     );
   }
+
+  /// مساعد: اضف حدث للسجل مع حفظ تلقائي في الذاكرة (لا تحفظ في DB هنا — النقطة الأعلى تحفظ بعد استدعاء SessionDb.updateSession)
+  // models.dart
+  void addEvent(String action, {Map<String, dynamic>? meta}) {
+    events.add({
+      'ts': DateTime.now().toIso8601String(),
+      'action': action,
+      'meta': meta ?? {},
+    });
+  }
+
+  // مكان الاستدعاء
 }
 
 /// ---------------- CartItem ----------------

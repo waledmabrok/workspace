@@ -238,7 +238,10 @@ class _FinancePageState extends State<FinancePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('المصاريف و الأرباح')),
+      appBar: AppBar(
+        forceMaterialTransparency: true,
+        title: const Text('المصاريف و الأرباح'),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(

@@ -57,47 +57,77 @@ class _PricingSettingsPageState extends State<PricingSettingsPage> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator(color: Colors.white)),
+      );
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('إعدادات التسعير')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
+      //  backgroundColor: const Color(0xFF071022),
+      appBar: AppBar(
+        title: const Text('إعدادات التسعير'),
+        centerTitle: true,
+        backgroundColor: Color(0xFF071022),
+        elevation: 0,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            TextField(
-              controller: _freeMinutes,
-              decoration: const InputDecoration(
-                labelText: 'عدد الدقائق المجانية',
+            _buildCardField(_freeMinutes, 'عدد الدقائق المجانية'),
+            const SizedBox(height: 12),
+            _buildCardField(_firstHour, 'سعر الساعة الأولى'),
+            const SizedBox(height: 12),
+            _buildCardField(_perHourAfter, 'سعر كل ساعة بعد الأولى'),
+            const SizedBox(height: 12),
+            _buildCardField(_dailyCap, 'الحد اليومي الأعلى'),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _saveSettings,
+                icon: const Icon(Icons.save),
+                label: const Text(
+                  ' حفظ التغييرات',
+                  style: TextStyle(color: Colors.white),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Color(0xFF1E2334),
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  textStyle: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
               ),
-              keyboardType: TextInputType.number,
-            ),
-            TextField(
-              controller: _firstHour,
-              decoration: const InputDecoration(labelText: 'سعر الساعة الأولى'),
-              keyboardType: TextInputType.number,
-            ),
-            TextField(
-              controller: _perHourAfter,
-              decoration: const InputDecoration(
-                labelText: 'سعر كل ساعة بعد الأولى',
-              ),
-              keyboardType: TextInputType.number,
-            ),
-            TextField(
-              controller: _dailyCap,
-              decoration: const InputDecoration(
-                labelText: 'الحد اليومي الأعلى',
-              ),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _saveSettings,
-              child: const Text('💾 حفظ التغييرات'),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCardField(TextEditingController controller, String label) {
+    return Card(
+      elevation: 3,
+      shadowColor: Colors.black54,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      color: const Color(0xFF1A2233),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            labelText: label,
+            labelStyle: const TextStyle(color: Colors.white70),
+            border: InputBorder.none,
+          ),
         ),
       ),
     );

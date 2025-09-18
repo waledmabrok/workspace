@@ -188,7 +188,10 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('اداره الاشتراكات')),
+      appBar: AppBar(
+        forceMaterialTransparency: true,
+        title: const Text('اداره الاشتراكات'),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -264,6 +267,10 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
       builder: (_) => SubscriptionDialog(plan: p),
     );
     if (res != null) {
+      // ✅ نحفظ التعديل في SQLite
+      await SubscriptionDb.updatePlan(res);
+
+      // ✅ نحدث نسخة AdminDataService
       final index = AdminDataService.instance.subscriptions.indexWhere(
         (s) => s.id == res.id,
       );
@@ -301,7 +308,7 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
 
   String _durationType = "hour";
   bool _isUnlimited = false;
-  String _dailyUsageType = "full"; // ✅ كامل / ساعات محدودة
+  String _dailyUsageType = "full"; // "full" or "limited"
 
   @override
   void initState() {
@@ -314,9 +321,20 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
     );
     _isUnlimited = widget.plan?.isUnlimited ?? false;
     _dailyUsageType = widget.plan?.dailyUsageType ?? "full";
+
+    // هنا نستخدم dailyUsageHours الموجود في الموديل (لو كان موجود)
     _dailyHours = TextEditingController(
       text: widget.plan?.dailyUsageHours?.toString() ?? '',
     );
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _price.dispose();
+    _durationValue.dispose();
+    _dailyHours.dispose();
+    super.dispose();
   }
 
   @override
@@ -359,7 +377,7 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
             ),
             const Divider(height: 20, thickness: 1),
 
-            // ✅ اختيار نوع الاستخدام اليومي
+            // اختيار نوع الاستخدام اليومي
             DropdownButtonFormField<String>(
               value: _dailyUsageType,
               items: [
@@ -378,7 +396,7 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
                 controller: _dailyHours,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
-                  labelText: 'عدد الساعات في اليوم',
+                  labelText: 'عدد الساعات في اليوم (1 - 24)',
                 ),
               ),
           ],
@@ -394,7 +412,21 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
             final name = _name.text.trim();
             final price = double.tryParse(_price.text) ?? 0.0;
             final durationVal = int.tryParse(_durationValue.text);
-            final dailyHours = int.tryParse(_dailyHours.text);
+
+            int? dailyHours;
+            if (_dailyUsageType == "limited") {
+              final h = int.tryParse(_dailyHours.text);
+              if (h == null || h < 1 || h > 24) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("عدد الساعات اليومية لازم يكون بين 1 و 24"),
+                  ),
+                );
+                return;
+              }
+              dailyHours = h;
+            }
+
             if (name.isEmpty) return;
 
             final plan = SubscriptionPlan(
@@ -404,6 +436,7 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
               durationValue: _isUnlimited ? null : durationVal,
               price: price,
               dailyUsageType: _dailyUsageType,
+              // هنا نمرر ساعات — و باقي الكود يحسب دقائق لما يحتاجها: allowedToday = dailyUsageHours * 60
               dailyUsageHours: _dailyUsageType == "limited" ? dailyHours : null,
               isUnlimited: _isUnlimited,
             );

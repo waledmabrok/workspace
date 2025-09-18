@@ -8,6 +8,7 @@ import 'dart:math';
 import '../../core/db_helper_Subscribe.dart';
 import '../../core/data_service.dart';
 import '../../core/models.dart';
+import 'CustomerSubscribe.dart';
 import 'discounts_page.dart';
 import 'finance_page.dart';
 
@@ -53,7 +54,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     }
 
     // Seed products
- /*   final products = await ProductDb.getProducts();
+    /*   final products = await ProductDb.getProducts();
     if (products.isEmpty) {
       await ProductDb.insertProduct(
         Product(id: generateId(), name: 'قهوة', price: 5.0, stock: 20),
@@ -63,7 +64,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
       );
     }*/
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -92,7 +92,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           MaterialPageRoute(builder: (_) => SalesPage()),
         ),
       ),
-    /*  _AdminCardData(
+      /*  _AdminCardData(
         'الفواتير الاجله',
         Icons.pending_actions,
         () => Navigator.push(
@@ -117,9 +117,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
         Icons.hourglass_bottom,
         () => Navigator.push(
           context,
-          MaterialPageRoute(
-            builder: (_) => PricingSettingsPage(),
-          ),
+          MaterialPageRoute(builder: (_) => PricingSettingsPage()),
         ),
       ),
       _AdminCardData(
@@ -137,12 +135,21 @@ class _AdminDashboardState extends State<AdminDashboard> {
           context,
           MaterialPageRoute(builder: (_) => DiscountsPage()),
         ),
-      ),_AdminCardData("أرصدة العملاء", Icons.account_balance, () {
-        Navigator.push(context,
-            MaterialPageRoute(builder: (_) => CustomersBalancesPage()));
+      ),
+      _AdminCardData("أرصدة العملاء", Icons.account_balance, () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => CustomersBalancesPage()),
+        );
       }),
-
+      _AdminCardData("المشتركين", Icons.account_balance, () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => AdminSubscribersPage()),
+        );
+      }),
     ];
+
     Future<String?> _askForNewPassword(BuildContext context) async {
       final controller = TextEditingController();
       return showDialog<String>(
@@ -184,19 +191,20 @@ class _AdminDashboardState extends State<AdminDashboard> {
             onPressed: () async {
               final role = await showDialog<String>(
                 context: context,
-                builder: (ctx) => SimpleDialog(
-                  title: const Text("اختر الحساب"),
-                  children: [
-                    SimpleDialogOption(
-                      onPressed: () => Navigator.pop(ctx, "admin"),
-                      child: const Text("الأدمن"),
+                builder:
+                    (ctx) => SimpleDialog(
+                      title: const Text("اختر الحساب"),
+                      children: [
+                        SimpleDialogOption(
+                          onPressed: () => Navigator.pop(ctx, "admin"),
+                          child: const Text("الأدمن"),
+                        ),
+                        SimpleDialogOption(
+                          onPressed: () => Navigator.pop(ctx, "cashier"),
+                          child: const Text("الكاشير"),
+                        ),
+                      ],
                     ),
-                    SimpleDialogOption(
-                      onPressed: () => Navigator.pop(ctx, "cashier"),
-                      child: const Text("الكاشير"),
-                    ),
-                  ],
-                ),
               );
 
               if (role != null) {

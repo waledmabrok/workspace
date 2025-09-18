@@ -66,10 +66,42 @@ class SubscriptionDb {
     );
   }
 
+  /// Get active subscription of a customer (null if none)
+  static Future<SubscriptionPlan?> getActiveForCustomer(
+    String customerId,
+  ) async {
+    final db = await DbHelper.instance.database;
+    final rows = await db.rawQuery(
+      '''
+      SELECT sp.* 
+      FROM customer_subscriptions cs
+      JOIN subscriptions sp ON cs.subscriptionPlanId = sp.id
+      WHERE cs.customerId = ? 
+        AND (cs.endDate IS NULL OR cs.endDate > strftime('%s','now')*1000)
+      ORDER BY cs.startDate DESC
+      LIMIT 1
+    ''',
+      [customerId],
+    );
+
+    if (rows.isEmpty) return null;
+    return SubscriptionPlan.fromMap(rows.first);
+  }
+
   static Future<List<SubscriptionPlan>> getPlans() async {
     final db = await DbHelper.instance.database;
     final res = await db.query('subscriptions');
     return res.map((e) => SubscriptionPlan.fromMap(e)).toList();
+  }
+
+  static Future<void> updatePlan(SubscriptionPlan plan) async {
+    final db = await DbHelper.instance.database;
+    await db.update(
+      'subscriptions',
+      plan.toMap(),
+      where: 'id = ?',
+      whereArgs: [plan.id],
+    );
   }
 
   static Future<void> deletePlan(String id) async {

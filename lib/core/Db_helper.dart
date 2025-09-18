@@ -201,11 +201,13 @@ class DbHelper {
     _database = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 1, // 👈 رجعناها 1
+        version: 1,
         onCreate: _onCreate,
         onOpen: (db) async {
           await _ensureSalesColumns(db);
           await _ensureFinanceTables(db);
+          await _ensureSubscriptionsColumns(db);
+          await _ensureSessionsColumns(db);
         },
       ),
     );
@@ -215,24 +217,23 @@ class DbHelper {
 
   // ---------------- onCreate ----------------
   Future<void> _onCreate(Database db, int version) async {
+    // إعداد جدول الاشتراكات
     await db.execute('''
-      CREATE TABLE pricing_settings (
-        id INTEGER PRIMARY KEY,
-        firstFreeMinutes INTEGER,
-        firstHourFee REAL,
-        perHourAfterFirst REAL,
-        dailyCap REAL
+      CREATE TABLE subscriptions (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        durationType TEXT,
+        durationValue INTEGER,
+        price REAL,
+        dailyUsageType TEXT,
+        dailyUsageHours INTEGER,
+        weeklyHours TEXT,
+        isUnlimited INTEGER,
+        endDate INTEGER
       )
     ''');
 
-    await db.insert("pricing_settings", {
-      'id': 1,
-      'firstFreeMinutes': 15,
-      'firstHourFee': 30,
-      'perHourAfterFirst': 20,
-      'dailyCap': 150,
-    });
-
+    // إعداد جدول الجلسات
     await db.execute('''
       CREATE TABLE sessions(
         id TEXT PRIMARY KEY,
@@ -247,24 +248,28 @@ class DbHelper {
         type TEXT,
         paidMinutes INTEGER DEFAULT 0,
         pauseStart INTEGER,
-        customerId TEXT
+        customerId TEXT,
+       events TEXT,
+  savedSubscriptionJson TEXT,
+  resumeNextDayRequested INTEGER DEFAULT 0,
+  resumeDate INTEGER
       )
     ''');
 
+    // جدول علاقة العميل بالاشتراك
     await db.execute('''
-      CREATE TABLE subscriptions (
+      CREATE TABLE customer_subscriptions (
         id TEXT PRIMARY KEY,
-        name TEXT,
-        durationType TEXT,
-        durationValue INTEGER,
-        price REAL,
-        dailyUsageType TEXT,
-        dailyUsageHours INTEGER,
-        weeklyHours TEXT,
-        isUnlimited INTEGER
+        customerId TEXT,
+        subscriptionPlanId TEXT,
+        startDate INTEGER,
+        endDate INTEGER,
+        FOREIGN KEY(customerId) REFERENCES customers(id),
+        FOREIGN KEY(subscriptionPlanId) REFERENCES subscriptions(id)
       )
     ''');
 
+    // المنتجات
     await db.execute('''
       CREATE TABLE products (
         id TEXT PRIMARY KEY,
@@ -274,6 +279,7 @@ class DbHelper {
       )
     ''');
 
+    // سلة المنتجات
     await db.execute('''
       CREATE TABLE cart_items(
         id TEXT PRIMARY KEY,
@@ -283,6 +289,7 @@ class DbHelper {
       )
     ''');
 
+    // المصروفات
     await db.execute('''
       CREATE TABLE expenses(
         id TEXT PRIMARY KEY,
@@ -292,6 +299,7 @@ class DbHelper {
       )
     ''');
 
+    // المبيعات
     await db.execute('''
       CREATE TABLE sales(
         id TEXT PRIMARY KEY,
@@ -300,10 +308,12 @@ class DbHelper {
         discount REAL,
         date INTEGER,
         paymentMethod TEXT,
-        customerId TEXT
+        customerId TEXT,
+        customerName TEXT
       )
     ''');
 
+    // الخصومات
     await db.execute('''
       CREATE TABLE discounts (
         id TEXT PRIMARY KEY,
@@ -315,6 +325,7 @@ class DbHelper {
       )
     ''');
 
+    // العملاء
     await db.execute('''
       CREATE TABLE customers (
         id TEXT PRIMARY KEY,
@@ -324,6 +335,7 @@ class DbHelper {
       )
     ''');
 
+    // أرصدة العملاء
     await db.execute('''
       CREATE TABLE customer_balances (
         customerId TEXT PRIMARY KEY,
@@ -332,15 +344,16 @@ class DbHelper {
       )
     ''');
 
+    // الدرج النقدي
     await db.execute('''
       CREATE TABLE drawer (
         id INTEGER PRIMARY KEY,
         balance REAL
       )
     ''');
-
     await db.insert('drawer', {'id': 1, 'balance': 0.0});
 
+    // الشيفتات
     await db.execute('''
       CREATE TABLE shifts (
         id TEXT PRIMARY KEY,
@@ -350,6 +363,24 @@ class DbHelper {
         total_sales REAL
       )
     ''');
+
+    // إعداد جدول التسعير
+    await db.execute('''
+      CREATE TABLE pricing_settings (
+        id INTEGER PRIMARY KEY,
+        firstFreeMinutes INTEGER,
+        firstHourFee REAL,
+        perHourAfterFirst REAL,
+        dailyCap REAL
+      )
+    ''');
+    await db.insert("pricing_settings", {
+      'id': 1,
+      'firstFreeMinutes': 15,
+      'firstHourFee': 30,
+      'perHourAfterFirst': 20,
+      'dailyCap': 150,
+    });
   }
 
   // ---------------- أدوات مساعدة ----------------
@@ -359,7 +390,9 @@ class DbHelper {
       final colNames = cols.map((c) => c['name'] as String).toList();
 
       if (!colNames.contains('discount')) {
-        await db.execute('ALTER TABLE sales ADD COLUMN discount REAL DEFAULT 0.0');
+        await db.execute(
+          'ALTER TABLE sales ADD COLUMN discount REAL DEFAULT 0.0',
+        );
       }
       if (!colNames.contains('paymentMethod')) {
         await db.execute('ALTER TABLE sales ADD COLUMN paymentMethod TEXT');
@@ -367,8 +400,45 @@ class DbHelper {
       if (!colNames.contains('customerId')) {
         await db.execute('ALTER TABLE sales ADD COLUMN customerId TEXT');
       }
-      if (!colNames.contains('customerName')) {  // ✅ إضافة customerName
+      if (!colNames.contains('customerName')) {
         await db.execute('ALTER TABLE sales ADD COLUMN customerName TEXT');
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _ensureSessionsColumns(Database db) async {
+    try {
+      final cols = await db.rawQuery('PRAGMA table_info(sessions)');
+      final colNames = cols.map((c) => c['name'] as String).toList();
+      if (!colNames.contains('events')) {
+        await db.execute('ALTER TABLE sessions ADD COLUMN events TEXT');
+      }
+      if (!colNames.contains('savedSubscriptionJson')) {
+        await db.execute(
+          'ALTER TABLE sessions ADD COLUMN savedSubscriptionJson TEXT',
+        );
+      }
+      if (!colNames.contains('resumeNextDayRequested')) {
+        await db.execute(
+          'ALTER TABLE sessions ADD COLUMN resumeNextDayRequested INTEGER DEFAULT 0',
+        );
+      }
+      if (!colNames.contains('resumeDate')) {
+        await db.execute('ALTER TABLE sessions ADD COLUMN resumeDate INTEGER');
+      }
+
+      if (!colNames.contains('resumeNextDayRequested')) {
+        await db.execute(
+          'ALTER TABLE sessions ADD COLUMN resumeNextDayRequested INTEGER DEFAULT 0',
+        );
+      }
+      if (!colNames.contains('resumeDate')) {
+        await db.execute('ALTER TABLE sessions ADD COLUMN resumeDate INTEGER');
+      }
+      if (!colNames.contains('savedSubscriptionJson')) {
+        await db.execute(
+          'ALTER TABLE sessions ADD COLUMN savedSubscriptionJson TEXT',
+        );
       }
     } catch (_) {}
   }
@@ -390,7 +460,12 @@ class DbHelper {
         )
       ''');
 
-      final rows = await db.query('drawer', where: 'id = ?', whereArgs: [1], limit: 1);
+      final rows = await db.query(
+        'drawer',
+        where: 'id = ?',
+        whereArgs: [1],
+        limit: 1,
+      );
       if (rows.isEmpty) {
         await db.insert('drawer', {'id': 1, 'balance': 0.0});
       }
@@ -404,6 +479,52 @@ class DbHelper {
           total_sales REAL
         )
       ''');
+
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS customer_subscriptions (
+          id TEXT PRIMARY KEY,
+          customerId TEXT,
+          subscriptionPlanId TEXT,
+          startDate INTEGER,
+          endDate INTEGER,
+          FOREIGN KEY(customerId) REFERENCES customers(id),
+          FOREIGN KEY(subscriptionPlanId) REFERENCES subscriptions(id)
+        )
+      ''');
+    } catch (_) {}
+  }
+
+  // ---------------- تحديث جدول subscriptions ----------------
+  Future<void> _ensureSubscriptionsColumns(Database db) async {
+    try {
+      final cols = await db.rawQuery('PRAGMA table_info(subscriptions)');
+      final colNames = cols.map((c) => c['name'] as String).toList();
+
+      if (!colNames.contains('dailyUsageType')) {
+        await db.execute(
+          'ALTER TABLE subscriptions ADD COLUMN dailyUsageType TEXT',
+        );
+      }
+      if (!colNames.contains('dailyUsageHours')) {
+        await db.execute(
+          'ALTER TABLE subscriptions ADD COLUMN dailyUsageHours INTEGER',
+        );
+      }
+      if (!colNames.contains('weeklyHours')) {
+        await db.execute(
+          'ALTER TABLE subscriptions ADD COLUMN weeklyHours TEXT',
+        );
+      }
+      if (!colNames.contains('isUnlimited')) {
+        await db.execute(
+          'ALTER TABLE subscriptions ADD COLUMN isUnlimited INTEGER DEFAULT 0',
+        );
+      }
+      if (!colNames.contains('endDate')) {
+        await db.execute(
+          'ALTER TABLE subscriptions ADD COLUMN endDate INTEGER',
+        );
+      }
     } catch (_) {}
   }
 }

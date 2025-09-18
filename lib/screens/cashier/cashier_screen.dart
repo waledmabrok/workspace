@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:workspace/screens/cashier/user_Subscripe.dart';
 import '../../core/FinanceDb.dart';
 import '../../core/db_helper_cart.dart';
 import '../../core/db_helper_customers.dart';
@@ -8,6 +9,8 @@ import '../../core/data_service.dart';
 import '../../core/db_helper_sessions.dart';
 import 'dart:async';
 
+import '../../widget/dialog.dart';
+import '../admin/CustomerSubscribe.dart';
 import 'notification.dart';
 import '../../core/db_helper_customer_balance.dart';
 
@@ -125,13 +128,25 @@ class _CashierScreenState extends State<CashierScreen> {
   }
 
   int getSessionMinutes(Session s) {
+    // invariant:
+    // - s.elapsedMinutes = مجموع دقائق الفترات المنتهية سابقاً
+    // - s.pauseStart != null فقط عندما تكون الجلسة "تشغّل" (running)
+    if (s.isPaused) {
+      return s.elapsedMinutes;
+    } else {
+      final since = s.pauseStart ?? s.start;
+      return s.elapsedMinutes + DateTime.now().difference(since).inMinutes;
+    }
+  }
+
+  /*int getSessionMinutes(Session s) {
     if (s.isPaused) {
       return s.elapsedMinutes;
     } else {
       return s.elapsedMinutes +
           DateTime.now().difference(s.pauseStart ?? s.start).inMinutes;
     }
-  }
+  }*/
 
   double _calculateTimeChargeFromMinutes(int minutes) {
     final settings = AdminDataService.instance.pricingSettings;
@@ -453,24 +468,28 @@ $dailyLimitInfo
     });
   }
 
-  void _togglePauseSession(int index) async {
-    final s = _filteredSessions[index];
+  Future<void> _togglePauseSessionFor(Session s) async {
     if (!s.isActive) return;
 
     setState(() {
       if (s.isPaused) {
-        // استئناف
+        // استئناف: نبدأ العد من الآن
         s.isPaused = false;
-        s.pauseStart = DateTime.now(); // سجل وقت الاستئناف
+        s.pauseStart = DateTime.now();
       } else {
-        // إيقاف مؤقت
+        // إيقاف مؤقت: نجمع الدقائق منذ آخر resume (أو start) ونوقف
+        final since = s.pauseStart ?? s.start;
+        s.elapsedMinutes += DateTime.now().difference(since).inMinutes;
         s.isPaused = true;
-        s.elapsedMinutes +=
-            DateTime.now().difference(s.pauseStart ?? s.start).inMinutes;
+        s.pauseStart = null; // نفضّل تعيينه null عند الإيقاف
       }
     });
 
-    await SessionDb.updateSession(s);
+    try {
+      await SessionDb.updateSession(s);
+    } catch (e, st) {
+      debugPrint('Failed to update session pause toggle: $e\n$st');
+    }
   }
 
   Widget _buildAddProductsAndPay(Session s) {
@@ -652,165 +671,6 @@ $dailyLimitInfo
     return plan.dailyUsageHours! * 60; // تحويل ساعات إلى دقائق
   }
 
-  /*  Future<void> _showReceiptDialog(
-    Session s,
-    double timeCharge,
-    double productsTotal,
-    int minutesToCharge,
-  ) async {
-    double discountValue = 0.0;
-    String? appliedCode;
-    final codeCtrl = TextEditingController();
-    String paymentMethod = "cash";
-    final TextEditingController paidCtrl = TextEditingController();
-    await showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            double finalTotal = timeCharge + productsTotal - discountValue;
-            return AlertDialog(
-              title: Text('إيصال الدفع - ${s.name}'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('وقت الجلسة: ${timeCharge.toStringAsFixed(2)} ج'),
-                    const SizedBox(height: 8),
-                    ...s.cart.map(
-                      (item) => Text(
-                        '${item.product.name} x${item.qty} = ${item.total} ج',
-                      ),
-                    ),
-                    const SizedBox(height: 12), // 🟢 اختيار وسيلة الدفع
-                    Row(
-                      children: [
-                        const Text("طريقة الدفع: "),
-                        const SizedBox(width: 8),
-                        DropdownButton<String>(
-                          value: paymentMethod,
-                          items: const [
-                            DropdownMenuItem(value: "cash", child: Text("كاش")),
-                            DropdownMenuItem(
-                              value: "wallet",
-                              child: Text("محفظة"),
-                            ),
-                          ],
-                          onChanged: (val) {
-                            if (val != null) {
-                              setDialogState(() => paymentMethod = val);
-                            }
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12), // 🟢
-                    // المبلغ المطلوب
-                    Text(
-                      'المطلوب: ${finalTotal.toStringAsFixed(2)} ج',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8), // 🟢 إدخال المبلغ المدفوع
-                    TextField(
-                      controller: paidCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: "المبلغ المدفوع",
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('إلغاء'),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    // ✅ المبلغ المطلوب
-                    final requiredAmount = finalTotal; // ✅ المبلغ المدفوع
-                    final paidAmount =
-                        double.tryParse(paidCtrl.text) ?? 0.0; // ✅ الفرق
-                    final diff =
-                        paidAmount - requiredAmount; // ✅ تحديث دقائق الدفع
-                    s.paidMinutes += minutesToCharge;
-                    s.amountPaid += paidAmount; // ✅ تحديث رصيد العميل
-                    if (s.name.isNotEmpty) {
-                      final oldBalance = AdminDataService
-                          .instance
-                          .customerBalances
-                          .firstWhere(
-                            (b) => b.customerId == s.name,
-                            orElse:
-                                () => CustomerBalance(
-                                  customerId: s.name,
-                                  balance: 0,
-                                ),
-                          );
-                      final newBalance = oldBalance.balance + diff;
-                      final updated = CustomerBalance(
-                        customerId: s.name,
-                        balance: newBalance,
-                      );
-                      await CustomerBalanceDb.upsert(updated);
-                      final idx = AdminDataService.instance.customerBalances
-                          .indexWhere((b) => b.customerId == s.name);
-                      if (idx >= 0) {
-                        AdminDataService.instance.customerBalances[idx] =
-                            updated;
-                      } else {
-                        AdminDataService.instance.customerBalances.add(updated);
-                      }
-                    } // ✅ قفل الجلسة
-                    setState(() {
-                      s.isActive = false;
-                      s.isPaused = false;
-                    });
-                    await SessionDb.updateSession(s); // ✅ حفظ كـ
-                    Sale;
-                    final sale = Sale(
-                      id: generateId(),
-                      description:
-                          'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة + منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}'
-                          '${appliedCode != null ? " (بكود $appliedCode)" : ""}',
-                      amount: paidAmount,
-                    );
-                    await AdminDataService.instance.addSale(
-                      sale,
-                      paymentMethod: paymentMethod,
-                      customer: _currentCustomer,
-                      updateDrawer: paymentMethod == "cash",
-                    );
-                    try {
-                      await _loadDrawerBalance();
-                    } catch (e, st) {
-                      debugPrint('Failed to update drawer: $e\n$st');
-                    }
-                    Navigator.pop(context); // ✅ رسالة توضح الفلوس
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          diff == 0
-                              ? '✅ دفع كامل: ${paidAmount.toStringAsFixed(2)} ج'
-                              : diff > 0
-                              ? '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي له ${diff.toStringAsFixed(2)} ج عندك'
-                              : '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي عليك ${(diff.abs()).toStringAsFixed(2)} ج',
-                        ),
-                      ),
-                    );
-                  },
-                  child: const Text('تأكيد الدفع'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }*/
-
   Future<void> _showReceiptDialog(
     Session s,
     double timeCharge,
@@ -823,6 +683,12 @@ $dailyLimitInfo
 
     String paymentMethod = "cash"; // 🟢 افتراضي: كاش
     final TextEditingController paidCtrl = TextEditingController();
+    final customerId = s.customerId;
+    double customerBalance = 0.0;
+
+    if (customerId != null && customerId.isNotEmpty) {
+      customerBalance = await CustomerBalanceDb.getBalance(customerId);
+    }
 
     await showDialog(
       context: context,
@@ -832,7 +698,9 @@ $dailyLimitInfo
             double finalTotal = timeCharge + productsTotal - discountValue;
 
             return AlertDialog(
-              title: Text('إيصال الدفع - ${s.name}'),
+              title: Text(
+                'إيصال الدفع - ${s.name} (الرصيد: ${customerBalance.toStringAsFixed(2)} ج)',
+              ),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1261,6 +1129,16 @@ $dailyLimitInfo
               ],
             ),
             IconButton(
+              icon: const Icon(Icons.subscriptions),
+              tooltip: 'الباقات',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => AdminSubscribersPagee()),
+                );
+              },
+            ),
+            IconButton(
               icon: const Icon(Icons.lock_clock),
               tooltip: 'تقفيل الشيفت',
               onPressed: () async {
@@ -1294,7 +1172,7 @@ $dailyLimitInfo
             IconButton(
               icon: const Icon(Icons.add_shopping_cart),
               tooltip: 'إضافة منتجات بدون اسم',
-              onPressed: () async {
+              /* onPressed: () async {
                 // ✅ هات كل المشتركين اللي عندهم باقات
                 final subscribers =
                     _sessions
@@ -1358,8 +1236,61 @@ $dailyLimitInfo
                     _filteredSessions = _sessions;
                   });
                 }
+              },*/
+              onPressed: () async {
+                final subscribers =
+                    _sessions
+                        .where((s) => s.subscription != null && s.isActive)
+                        .toList();
+
+                Session? selectedSession;
+
+                if (subscribers.isNotEmpty) {
+                  selectedSession = await showDialog<Session>(
+                    context: context,
+                    builder: (context) {
+                      return AlertDialog(
+                        title: const Text('اختر مشترك'),
+                        content: SizedBox(
+                          width: double.maxFinite,
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: subscribers.length,
+                            itemBuilder: (context, i) {
+                              final sub = subscribers[i];
+                              return ListTile(
+                                title: Text(sub.name),
+                                subtitle: Text(
+                                  "باقة: ${sub.subscription?.name ?? ''}",
+                                ),
+                                onTap:
+                                    () => Navigator.pop(
+                                      context,
+                                      sub,
+                                    ), // ✅ رجع السيشن نفسه
+                              );
+                            },
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                }
+
+                // لو المستخدم ما اختارش → Cancel
+                if (selectedSession == null) return;
+
+                await showModalBottomSheet(
+                  context: context,
+                  builder: (_) => _buildAddProductsAndPay(selectedSession!),
+                );
+
+                setState(() {
+                  _filteredSessions = _sessions; // تحديث العرض بعد الإضافة
+                });
               },
             ),
+
             Stack(
               children: [
                 IconButton(
@@ -1522,9 +1453,9 @@ $dailyLimitInfo
                       Expanded(
                         child: TabBarView(
                           children: [
-                            _buildSubscribersList3(
-                              withPlan: true,
-                            ), // المشتركين باقات
+                            AdminSubscribersPagee(),
+                            //_buildSubscribersList3(withPlan: true),
+                            // المشتركين باقات
                             _buildSubscribersList(withPlan: false),
 
                             _buildSalesList(),
@@ -1756,7 +1687,8 @@ $dailyLimitInfo
               children: [
                 if (s.isActive)
                   ElevatedButton(
-                    onPressed: () => _togglePauseSession(i),
+                    onPressed: () => _togglePauseSessionFor(s),
+
                     child: Text(s.isPaused ? 'استئناف' : 'ايقاف مؤقت'),
                   ),
                 const SizedBox(width: 4),
@@ -1780,12 +1712,6 @@ $dailyLimitInfo
   }
 
   Widget _buildSubscribersList3({required bool withPlan}) {
-    // فلترة مباشرة من _sessions
-    /* final filtered =
-        _sessions.where((s) {
-          if (withPlan) return s.type == "باقة";
-          return s.type == "حر";
-        }).toList();*/
     final searchText = _searchCtrl.text.toLowerCase();
     final filtered =
         _sessions.where((s) {
@@ -1796,78 +1722,461 @@ $dailyLimitInfo
 
     if (filtered.isEmpty) return const Center(child: Text("لا يوجد بيانات"));
 
+    String _formatHoursMinutes(int minutes) {
+      final h = minutes ~/ 60;
+      final m = minutes % 60;
+      if (h > 0) return "${h}س ${m}د";
+      return "${m}د";
+    }
+
     return ListView.builder(
       itemCount: filtered.length,
       itemBuilder: (context, i) {
         final s = filtered[i];
-        final spentMinutes = getSessionMinutes(s);
-        final endTime = getSubscriptionEnd(s);
 
-        String timeInfo =
-            s.subscription != null
-                ? (endTime != null
-                    ? "من: ${s.start.toLocal()} ⇢ ينتهي: ${endTime.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة"
-                    : "من: ${s.start.toLocal()} ⇢ غير محدود ⇢ مضى: ${spentMinutes} دقيقة")
-                : "من: ${s.start.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة";
+        final totalMinutes = getSessionMinutes(
+          s,
+        ); // إجمالي دقائق الجلسة حتى الآن
+        final spentToday = getSessionMinutesToday(s); // دقائق اليوم فقط
+
+        // حساب الحد اليومي (مخزن بالساعات في SubscriptionPlan)
+        int allowedToday = -1; // -1 يعني غير محدود أو لا باقة
+        if (s.subscription != null &&
+            s.subscription!.dailyUsageType == 'limited' &&
+            s.subscription!.dailyUsageHours != null) {
+          allowedToday = s.subscription!.dailyUsageHours! * 60;
+        }
+
+        // دقائق زائدة بالفعل الآن (بحدود اليوم)
+        final extraNow =
+            (allowedToday > 0)
+                ? (spentToday - allowedToday).clamp(0, double.infinity).toInt()
+                : 0;
+
+        // دقائق جديدة لم تُدفع بعد (قد تكون مغطاة جزئياً بالباقة)
+        final minutesToCharge =
+            (totalMinutes - s.paidMinutes).clamp(0, totalMinutes).toInt();
+
+        // حساب كم من minutesToCharge سيغطيه الباقه وكم سيكون اضافي
+        int coveredByPlan = 0;
+        int extraIfPayNow = minutesToCharge;
+        if (allowedToday > 0) {
+          // قبل دقائق الجديدة كان spentToday - minutesToCharge
+          final priorSpentToday =
+              (spentToday - minutesToCharge).clamp(0, spentToday).toInt();
+          final remainingAllowanceBefore = (allowedToday - priorSpentToday)
+              .clamp(0, allowedToday);
+          coveredByPlan =
+              (minutesToCharge <= remainingAllowanceBefore)
+                  ? minutesToCharge
+                  : remainingAllowanceBefore;
+          extraIfPayNow = minutesToCharge - coveredByPlan;
+        } else {
+          coveredByPlan = 0;
+          extraIfPayNow = minutesToCharge;
+        }
+
+        final extraChargeEstimate = _calculateTimeChargeFromMinutes(
+          extraIfPayNow,
+        );
+
+        // منتجات الجلسة
+        final productsTotal = s.cart.fold(0.0, (sum, item) => sum + item.total);
+
+        // نص العرض
+        final startStr = s.start.toLocal().toString().split('.').first;
+        final endTime = getSubscriptionEnd(s);
+        final endStr =
+            endTime != null
+                ? endTime.toLocal().toString().split('.').first
+                : 'غير محدود';
+
+        String timeInfo;
+        if (s.subscription != null) {
+          String dailyInfo =
+              (allowedToday > 0)
+                  ? 'حد اليوم: ${_formatHoursMinutes(allowedToday)} • مضى اليوم: ${_formatHoursMinutes(spentToday)} • متبقي: ${_formatHoursMinutes((allowedToday - spentToday).clamp(0, allowedToday))}'
+                  : 'حد اليوم: غير محدود';
+          timeInfo =
+              'من: $startStr ⇢ ينتهي: $endStr\nمضى الكلي: ${_formatHoursMinutes(totalMinutes)} — $dailyInfo';
+          if (extraNow > 0) {
+            timeInfo +=
+                '\n⛔ دقائق زائدة الآن: ${_formatHoursMinutes(extraNow)}';
+          }
+        } else {
+          timeInfo =
+              'من: $startStr\nمضى الكلي: ${_formatHoursMinutes(totalMinutes)}';
+        }
 
         return Card(
           child: ListTile(
             title: Text(s.name),
             subtitle: Text(
-              '${s.isActive ? (s.isPaused ? "متوقف مؤقت" : "نشط") : "انتهت"} - $timeInfo',
+              '${s.isActive ? (s.isPaused ? "متوقف مؤقت" : "نشط") : "انتهت"}\n$timeInfo',
             ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (s.isActive)
                   ElevatedButton(
-                    onPressed: () => _togglePauseSession(i),
+                    onPressed: () => _togglePauseSessionFor(s),
+
                     child: Text(s.isPaused ? 'استئناف' : 'ايقاف مؤقت'),
                   ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 6),
+                // استدعاء Dialog قبل الدفع
                 if (s.isActive && !s.isPaused)
                   ElevatedButton(
                     onPressed: () async {
-                      double totalAmount = 0.0;
+                      await _showReceiptDialog(
+                        s,
+                        productsTotal,
+                        extraChargeEstimate,
+                        extraIfPayNow,
+                      );
+                    },
+                    child: const Text('ادفع الآن'),
+                  ),
 
-                      final minutesToCharge = getSessionMinutes(s);
+                /*  if (s.isActive && !s.isPaused)
+                  ElevatedButton(
+                    onPressed: () async {
+                      // حساب المبلغ المطلوب الآن كما في الكود الحالي
+                      final minutesToCharge =
+                          (getSessionMinutes(s) - s.paidMinutes)
+                              .clamp(0, getSessionMinutes(s))
+                              .toInt();
+                      final coveredByPlan =
+                          (() {
+                            // نفس منطق الحساب الذي استخدمته قبلًا لاستخراج coveredByPlan
+                            int allowedToday = -1;
+                            if (s.subscription != null &&
+                                s.subscription!.dailyUsageType == 'limited' &&
+                                s.subscription!.dailyUsageHours != null) {
+                              allowedToday =
+                                  s.subscription!.dailyUsageHours! * 60;
+                            }
+                            if (allowedToday > 0) {
+                              final spentToday = getSessionMinutesToday(s);
+                              final priorSpentToday =
+                                  (spentToday - minutesToCharge)
+                                      .clamp(0, spentToday)
+                                      .toInt();
+                              final remainingAllowanceBefore = (allowedToday -
+                                      priorSpentToday)
+                                  .clamp(0, allowedToday);
+                              return minutesToCharge <= remainingAllowanceBefore
+                                  ? minutesToCharge
+                                  : remainingAllowanceBefore;
+                            }
+                            return 0;
+                          })();
 
-                      // ✅ إذا الجلسة ضمن باقة → فقط المنتجات
-                      if (s.subscription != null) {
-                        totalAmount = s.cart.fold(
-                          0.0,
-                          (sum, item) => sum + item.total,
+                      final extraIfPayNow = minutesToCharge - coveredByPlan;
+                      final extraChargeEstimate =
+                          _calculateTimeChargeFromMinutes(extraIfPayNow);
+                      final productsTotal = s.cart.fold(
+                        0.0,
+                        (sum, item) => sum + item.total,
+                      );
+                      final requiredNow = extraChargeEstimate + productsTotal;
+
+                      if (requiredNow <= 0) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('لا يوجد مستحقات للدفع الآن.'),
+                          ),
                         );
-                      }
-                      // ✅ إذا جلسة حر → الوقت + المنتجات
-                      else {
-                        totalAmount =
-                            _calculateTimeChargeFromMinutes(minutesToCharge) +
-                            s.cart.fold(0.0, (sum, item) => sum + item.total);
+                        return;
                       }
 
-                      setState(() {
-                        s.isActive = false;
-                        s.isPaused = false;
-                        s.amountPaid += totalAmount; // فقط نضيف المبلغ الجديد
-                      });
+                      // حاول نلاقي العميل المسجل بالجلسة (أولوية: customerId داخل الجلسة ثم _currentCustomer ثم DB by name)
+                      Customer? cust;
+                      try {
+                        // لو عندك customerId في Session استخدمها (مثال: s.customerId)
+                        if ((s.customerId ?? '').isNotEmpty) {
+                          // مثال: CustomerDb.getById موجود؟ لو لا استعمل getAll/getByName كما عندك
+                          cust = await CustomerDb.getById(s.customerId!);
+                        }
+                      } catch (_) {}
 
+                      // لو ما لقيناش عن طريق id جرب _currentCustomer أو البحث بالاسم
+                      if (cust == null) {
+                        cust = _currentCustomer;
+                      }
+                      if (cust == null) {
+                        try {
+                          final found = await CustomerDb.getByName(s.name);
+                          if (found != null) cust = found;
+                        } catch (_) {}
+                      }
+
+                      double balance = 0.0;
+                      if (cust != null) {
+                        // جرب من الذاكرة أولا
+                        final cb = AdminDataService.instance.customerBalances
+                            .firstWhere(
+                              (b) => b.customerId == cust!.id,
+                              orElse:
+                                  () => CustomerBalance(
+                                    customerId: cust!.id,
+                                    balance: 0.0,
+                                  ),
+                            );
+                        balance = cb.balance;
+                        // لو القيمة صفر في الذاكرة، نحاول جلبها من DB كـ fallback
+                        if (balance == 0.0) {
+                          try {
+                            balance = await AdminDataService.instance
+                                .getCustomerBalance(cust.name);
+                          } catch (_) {}
+                        }
+                      }
+
+                      // لو فيه رصيد > 0، اعرض خيارات: استخدم الرصيد / كاش / مِكس
+                      if (cust != null && balance > 0) {
+                        final choice = await showDialog<String?>(
+                          context: context,
+                          builder:
+                              (_) => AlertDialog(
+                                title: const Text('طريقة الدفع'),
+                                content: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'رصيد العميل: ${balance.toStringAsFixed(2)} ج',
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'المطلوب الآن: ${requiredNow.toStringAsFixed(2)} ج',
+                                    ),
+                                    const SizedBox(height: 8),
+                                    const Text('اختر كيف تريد تحصيل المبلغ:'),
+                                  ],
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed:
+                                        () => Navigator.pop(context, 'cash'),
+                                    child: const Text('كاش فقط'),
+                                  ),
+                                  TextButton(
+                                    onPressed:
+                                        () => Navigator.pop(context, 'balance'),
+                                    child: const Text('من رصيد العميل'),
+                                  ),
+                                  TextButton(
+                                    onPressed:
+                                        () => Navigator.pop(context, 'mixed'),
+                                    child: const Text('رصيد + كاش (إن لزم)'),
+                                  ),
+                                ],
+                              ),
+                        );
+
+                        if (choice == null) return;
+
+                        if (choice == 'balance') {
+                          // استخدم من الرصيد فقط (نفرض أنه يكفي أو نأخذ ما هو متاح كليًا)
+                          final use =
+                              balance >= requiredNow ? requiredNow : balance;
+                          // خصم من رصيد العميل
+                          await AdminDataService.instance.adjustCustomerBalance(
+                            cust.name,
+                            -use,
+                          );
+                          // حدّث الذاكرة سريعاً
+                          final idx = AdminDataService.instance.customerBalances
+                              .indexWhere((b) => b.customerId == cust!.id);
+                          if (idx >= 0) {
+                            AdminDataService
+                                .instance
+                                .customerBalances[idx] = CustomerBalance(
+                              customerId: cust!.id,
+                              balance:
+                                  (AdminDataService
+                                          .instance
+                                          .customerBalances[idx]
+                                          .balance -
+                                      use),
+                            );
+                          } else {
+                            AdminDataService.instance.customerBalances.add(
+                              CustomerBalance(
+                                customerId: cust!.id,
+                                balance: 0.0,
+                              ),
+                            );
+                          }
+
+                          // سجّل مبيعة على أنها من رصيد العميل
+                          final saleBalance = Sale(
+                            id: generateId(),
+                            description:
+                                'دفعة من رصيد العميل ${cust.name} لجلسة ${s.name}',
+                            amount: use,
+                            paymentMethod: 'balance',
+                            customerId: cust.id,
+                          );
+                          await AdminDataService.instance.addSale(
+                            saleBalance,
+                            paymentMethod: 'balance',
+                            customer: cust,
+                            updateDrawer: false,
+                          );
+
+                          // لو الرصيد لم يغطي المطلوب و requiredNow > use (نادر هنا لأن choice == 'balance' لكن نتحصّن)
+                          final remaining = (requiredNow - use).clamp(
+                            0.0,
+                            double.infinity,
+                          );
+                          if (remaining > 0) {
+                            // خُذ الباقي ككاش
+                            final saleCash = Sale(
+                              id: generateId(),
+                              description: 'باقي دفعة كاش لجلسة ${s.name}',
+                              amount: remaining,
+                              paymentMethod: 'cash',
+                              customerId: cust.id,
+                            );
+                            await AdminDataService.instance.addSale(
+                              saleCash,
+                              paymentMethod: 'cash',
+                              customer: cust,
+                              updateDrawer: true,
+                            );
+                          }
+
+                          // حدّث الجلسة
+                          s.paidMinutes += minutesToCharge;
+                          s.amountPaid += requiredNow;
+                          await SessionDb.updateSession(s);
+                          await _loadDrawerBalance();
+                          setState(() {});
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'تم خصم ${use.toStringAsFixed(2)} ج من رصيد العميل.',
+                              ),
+                            ),
+                          );
+                          return;
+                        }
+
+                        if (choice == 'mixed') {
+                          // استعمل أقصى ما يمكن من الرصيد ثم كاش للباقي
+                          final useFromBalance =
+                              balance >= requiredNow ? requiredNow : balance;
+                          final cashNeeded = (requiredNow - useFromBalance)
+                              .clamp(0.0, double.infinity);
+
+                          if (useFromBalance > 0) {
+                            await AdminDataService.instance
+                                .adjustCustomerBalance(
+                                  cust.name,
+                                  -useFromBalance,
+                                );
+                            final idx = AdminDataService
+                                .instance
+                                .customerBalances
+                                .indexWhere((b) => b.customerId == cust!.id);
+                            if (idx >= 0) {
+                              AdminDataService
+                                  .instance
+                                  .customerBalances[idx] = CustomerBalance(
+                                customerId: cust!.id,
+                                balance:
+                                    (AdminDataService
+                                            .instance
+                                            .customerBalances[idx]
+                                            .balance -
+                                        useFromBalance),
+                              );
+                            } else {
+                              AdminDataService.instance.customerBalances.add(
+                                CustomerBalance(
+                                  customerId: cust!.id,
+                                  balance: 0.0,
+                                ),
+                              );
+                            }
+                            final saleBalance = Sale(
+                              id: generateId(),
+                              description:
+                                  'دفعة من رصيد العميل ${cust.name} لجلسة ${s.name}',
+                              amount: useFromBalance,
+                              paymentMethod: 'balance',
+                              customerId: cust.id,
+                            );
+                            await AdminDataService.instance.addSale(
+                              saleBalance,
+                              paymentMethod: 'balance',
+                              customer: cust,
+                              updateDrawer: false,
+                            );
+                          }
+
+                          if (cashNeeded > 0) {
+                            final saleCash = Sale(
+                              id: generateId(),
+                              description:
+                                  'دفع كاش لباقي المبلغ لجلسة ${s.name}',
+                              amount: cashNeeded,
+                              paymentMethod: 'cash',
+                              customerId: cust.id,
+                            );
+                            await AdminDataService.instance.addSale(
+                              saleCash,
+                              paymentMethod: 'cash',
+                              customer: cust,
+                              updateDrawer: true,
+                            );
+                          }
+
+                          // حدّث الجلسة
+                          s.paidMinutes += minutesToCharge;
+                          s.amountPaid += requiredNow;
+                          await SessionDb.updateSession(s);
+                          await _loadDrawerBalance();
+                          setState(() {});
+
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'تم الدفع: ${requiredNow.toStringAsFixed(2)} ج (منها ${useFromBalance.toStringAsFixed(2)} ج من الرصيد)',
+                              ),
+                            ),
+                          );
+                          return;
+                        }
+
+                        // choice == 'cash' falls through to normal cash handling
+                      }
+
+                      // إذا مافيش رصيد أو المستخدم اختار كاش:
+                      // نفذ الدفع كاش كامل
+                      // (نفس منطقك السابق)
+                      final paidAmount = requiredNow;
+                      s.paidMinutes += minutesToCharge;
+                      s.amountPaid += paidAmount;
                       await SessionDb.updateSession(s);
 
                       final sale = Sale(
                         id: generateId(),
                         description:
-                            'جلسة ${s.name} | ${s.subscription != null ? "منتجات فقط" : "وقت + منتجات"}',
-                        amount: totalAmount,
+                            'جلسة ${s.name} | دقائق مدفوعة: $minutesToCharge + منتجات: ${productsTotal.toStringAsFixed(2)}',
+                        amount: paidAmount,
+                        paymentMethod: 'cash',
                       );
 
                       await AdminDataService.instance.addSale(
                         sale,
                         paymentMethod: 'cash',
-                        customer: _currentCustomer,
-                        updateDrawer:
-                            true, // سيضيف المبلغ إلى درج الكاشير تلقائيًا
+                        customer: cust,
+                        updateDrawer: true,
                       );
+
                       try {
                         await _loadDrawerBalance();
                       } catch (e, st) {
@@ -1875,16 +2184,19 @@ $dailyLimitInfo
                           'Failed to update drawer after quick sale: $e\n$st',
                         );
                       }
+
+                      setState(() {});
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(
-                            '✅ تم الدفع: ${totalAmount.toStringAsFixed(2)} ج',
+                            '✅ تم الدفع ${paidAmount.toStringAsFixed(2)} ج',
                           ),
                         ),
                       );
                     },
-                    child: const Text('تأكيد الدفع'),
-                  ),
+
+                    child: const Text('ادفع الآن'),
+                  ),*/
               ],
             ),
           ),
@@ -1924,3 +2236,285 @@ extension FirstWhereOrNullExtension<E> on List<E> {
     return null;
   }
 }
+
+/*  Future<void> _showReceiptDialog(
+    Session s,
+    double timeCharge,
+    double productsTotal,
+    int minutesToCharge,
+  ) async {
+    double discountValue = 0.0;
+    String? appliedCode;
+    final codeCtrl = TextEditingController();
+    String paymentMethod = "cash";
+    final TextEditingController paidCtrl = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            double finalTotal = timeCharge + productsTotal - discountValue;
+            return AlertDialog(
+              title: Text('إيصال الدفع - ${s.name}'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('وقت الجلسة: ${timeCharge.toStringAsFixed(2)} ج'),
+                    const SizedBox(height: 8),
+                    ...s.cart.map(
+                      (item) => Text(
+                        '${item.product.name} x${item.qty} = ${item.total} ج',
+                      ),
+                    ),
+                    const SizedBox(height: 12), // 🟢 اختيار وسيلة الدفع
+                    Row(
+                      children: [
+                        const Text("طريقة الدفع: "),
+                        const SizedBox(width: 8),
+                        DropdownButton<String>(
+                          value: paymentMethod,
+                          items: const [
+                            DropdownMenuItem(value: "cash", child: Text("كاش")),
+                            DropdownMenuItem(
+                              value: "wallet",
+                              child: Text("محفظة"),
+                            ),
+                          ],
+                          onChanged: (val) {
+                            if (val != null) {
+                              setDialogState(() => paymentMethod = val);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12), // 🟢
+                    // المبلغ المطلوب
+                    Text(
+                      'المطلوب: ${finalTotal.toStringAsFixed(2)} ج',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8), // 🟢 إدخال المبلغ المدفوع
+                    TextField(
+                      controller: paidCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: "المبلغ المدفوع",
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('إلغاء'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    // ✅ المبلغ المطلوب
+                    final requiredAmount = finalTotal; // ✅ المبلغ المدفوع
+                    final paidAmount =
+                        double.tryParse(paidCtrl.text) ?? 0.0; // ✅ الفرق
+                    final diff =
+                        paidAmount - requiredAmount; // ✅ تحديث دقائق الدفع
+                    s.paidMinutes += minutesToCharge;
+                    s.amountPaid += paidAmount; // ✅ تحديث رصيد العميل
+                    if (s.name.isNotEmpty) {
+                      final oldBalance = AdminDataService
+                          .instance
+                          .customerBalances
+                          .firstWhere(
+                            (b) => b.customerId == s.name,
+                            orElse:
+                                () => CustomerBalance(
+                                  customerId: s.name,
+                                  balance: 0,
+                                ),
+                          );
+                      final newBalance = oldBalance.balance + diff;
+                      final updated = CustomerBalance(
+                        customerId: s.name,
+                        balance: newBalance,
+                      );
+                      await CustomerBalanceDb.upsert(updated);
+                      final idx = AdminDataService.instance.customerBalances
+                          .indexWhere((b) => b.customerId == s.name);
+                      if (idx >= 0) {
+                        AdminDataService.instance.customerBalances[idx] =
+                            updated;
+                      } else {
+                        AdminDataService.instance.customerBalances.add(updated);
+                      }
+                    } // ✅ قفل الجلسة
+                    setState(() {
+                      s.isActive = false;
+                      s.isPaused = false;
+                    });
+                    await SessionDb.updateSession(s); // ✅ حفظ كـ
+                    Sale;
+                    final sale = Sale(
+                      id: generateId(),
+                      description:
+                          'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة + منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}'
+                          '${appliedCode != null ? " (بكود $appliedCode)" : ""}',
+                      amount: paidAmount,
+                    );
+                    await AdminDataService.instance.addSale(
+                      sale,
+                      paymentMethod: paymentMethod,
+                      customer: _currentCustomer,
+                      updateDrawer: paymentMethod == "cash",
+                    );
+                    try {
+                      await _loadDrawerBalance();
+                    } catch (e, st) {
+                      debugPrint('Failed to update drawer: $e\n$st');
+                    }
+                    Navigator.pop(context); // ✅ رسالة توضح الفلوس
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          diff == 0
+                              ? '✅ دفع كامل: ${paidAmount.toStringAsFixed(2)} ج'
+                              : diff > 0
+                              ? '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي له ${diff.toStringAsFixed(2)} ج عندك'
+                              : '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي عليك ${(diff.abs()).toStringAsFixed(2)} ج',
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('تأكيد الدفع'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }*/
+
+///subscrip paid
+///if (currentPlan != null) {
+//       // 🟢 افتح Dialog الدفع
+//       final paid = await showDialog<bool>(
+//         context: context,
+//         builder:
+//             (_) => ReceiptDialog(
+//               session: session,
+//               fixedAmount:
+//                   currentPlan.price -
+//                   (_appliedDiscount?.percent ?? 0.0) * currentPlan.price / 100,
+//               description: 'اشتراك ${currentPlan.name}',
+//             ),
+//       );
+//
+//       if (paid == true) {
+//         final basePrice = currentPlan.price;
+//         final discountPercent = _appliedDiscount?.percent ?? 0.0;
+//         final discountValue = basePrice * (discountPercent / 100);
+//         final finalPrice = basePrice - discountValue;
+//         debugPrint('basePrice: $basePrice');
+//         debugPrint('discountPercent: $discountPercent');
+//         debugPrint('discountValue: $discountValue');
+//         debugPrint('finalPrice: $finalPrice');
+//
+//         session.amountPaid = finalPrice;
+//
+//         final sale = Sale(
+//           id: generateId(),
+//           description:
+//               'اشتراك ${currentPlan.name} للعميل $name'
+//               '${_appliedDiscount != null ? " (خصم ${_appliedDiscount!.percent}%)" : ""}',
+//           amount: finalPrice,
+//         );
+//
+//         try {
+//           await AdminDataService.instance.addSale(
+//             sale,
+//             paymentMethod: 'cash',
+//             customer: customer,
+//             updateDrawer: true,
+//           );
+//
+//           // 🔹 حساب معلومات الاشتراك للعرض
+//           final nowStr = now.toLocal().toString();
+//           final endStr = end?.toLocal().toString() ?? "غير محدود";
+//
+//           String durationInfo;
+//           switch (currentPlan.durationType) {
+//             case "hour":
+//               durationInfo = "تنتهي بعد ${currentPlan.durationValue} ساعة";
+//               break;
+//             case "day":
+//               durationInfo = "تنتهي بعد ${currentPlan.durationValue} يوم";
+//               break;
+//             case "week":
+//               durationInfo = "تنتهي بعد ${currentPlan.durationValue} أسبوع";
+//               break;
+//             case "month":
+//               durationInfo = "تنتهي بعد ${currentPlan.durationValue} شهر";
+//               break;
+//             default:
+//               durationInfo =
+//                   currentPlan.isUnlimited ? "غير محدودة" : "غير معروف";
+//           }
+//
+//           String dailyLimitInfo = "";
+//           if (currentPlan.dailyUsageType == "limited") {
+//             dailyLimitInfo =
+//                 "\nحد الاستخدام اليومي: ${currentPlan.dailyUsageHours} ساعة";
+//           }
+//
+//           // 🔹 عرض Dialog بتفاصيل الاشتراك
+//           await showDialog(
+//             context: context,
+//             builder:
+//                 (_) => AlertDialog(
+//                   title: Text("تفاصيل اشتراك ${currentPlan.name}"),
+//                   content: Text(
+//                     "العميل: $name\n"
+//                     "السعر: ${finalPrice.toStringAsFixed(2)} ج\n"
+//                     "بدأت: $nowStr\n"
+//                     "تنتهي: $endStr\n"
+//                     "$durationInfo\n"
+//                     "$dailyLimitInfo",
+//                   ),
+//                   actions: [
+//                     TextButton(
+//                       onPressed: () => Navigator.pop(context),
+//                       child: const Text("تمام"),
+//                     ),
+//                   ],
+//                 ),
+//           );
+//
+//           // 🔹 تحديث الرصيد ومسح الخصم لو single-use
+//           if (_appliedDiscount?.singleUse == true) {
+//             AdminDataService.instance.discounts.removeWhere(
+//               (d) => d.id == _appliedDiscount!.id,
+//             );
+//             _appliedDiscount = null;
+//           }
+//
+//           await _loadDrawerBalance();
+//           ScaffoldMessenger.of(context).showSnackBar(
+//             SnackBar(
+//               content: Text(
+//                 'تم دفع اشتراك ${currentPlan.name} (${finalPrice.toStringAsFixed(2)} ج)',
+//               ),
+//             ),
+//           );
+//         } catch (e, st) {
+//           debugPrint('Failed to process quick sale: $e\n$st');
+//           ScaffoldMessenger.of(context).showSnackBar(
+//             const SnackBar(content: Text('فشل تسجيل الدفعة — حاول مرة أخرى')),
+//           );
+//         }
+//       } else {
+//         // لو لغى الدايالوج
+//         return;
+//       }
+//     }

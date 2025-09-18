@@ -25,7 +25,10 @@ class _SalesPageState extends State<SalesPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('الفواتير المدفوعه')),
+      appBar: AppBar(
+        forceMaterialTransparency: true,
+        title: const Text('الفواتير المدفوعه'),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
