@@ -492,7 +492,7 @@ $dailyLimitInfo
     }
   }
 
-  Widget _buildAddProductsAndPay(Session s) {
+  /*  Widget _buildAddProductsAndPay(Session s) {
     Product? selectedProduct;
     TextEditingController qtyCtrl = TextEditingController(text: '1');
 
@@ -587,6 +587,190 @@ $dailyLimitInfo
                   _completeAndPayForSession(s);
                 },
                 child: const Text('إتمام ودفع'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }*/
+  Widget _buildAddProductsAndPay(Session s) {
+    Product? selectedProduct;
+    TextEditingController qtyCtrl = TextEditingController(text: '1');
+
+    return StatefulBuilder(
+      builder: (context, setSheetState) {
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Dropdown لاختيار المنتج
+              DropdownButtonFormField<Product>(
+                value: selectedProduct,
+                hint: const Text(
+                  'اختر منتج/مشروب',
+                  style: TextStyle(color: Colors.white70),
+                ),
+                dropdownColor: Colors.grey[850],
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: Colors.grey[800],
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 14,
+                  ),
+                ),
+                items:
+                    AdminDataService.instance.products.map((p) {
+                      return DropdownMenuItem(
+                        value: p,
+                        child: Text(
+                          '${p.name} (${p.price} ج)',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      );
+                    }).toList(),
+                onChanged: (val) {
+                  setSheetState(() => selectedProduct = val);
+                },
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: qtyCtrl,
+                      style: const TextStyle(color: Colors.white),
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: 'عدد',
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        filled: true,
+                        fillColor: Colors.grey[800],
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: () async {
+                      final qty = int.tryParse(qtyCtrl.text) ?? 1;
+                      if (selectedProduct != null) {
+                        final item = CartItem(
+                          id: generateId(),
+                          product: selectedProduct!,
+                          qty: qty,
+                        );
+
+                        await CartDb.insertCartItem(item, s.id);
+
+                        final updatedCart = await CartDb.getCartBySession(s.id);
+                        setSheetState(() => s.cart = updatedCart);
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blueAccent,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 14,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: const Text(
+                      'اضف',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // قائمة العناصر المضافة
+              ...s.cart.map((item) {
+                final qtyController = TextEditingController(
+                  text: item.qty.toString(),
+                );
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.product.name,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 60,
+                        child: TextField(
+                          controller: qtyController,
+                          style: const TextStyle(color: Colors.white),
+                          keyboardType: TextInputType.number,
+                          onChanged: (val) async {
+                            item.qty = int.tryParse(val) ?? item.qty;
+                            await CartDb.updateCartItemQty(item.id, item.qty);
+                            setSheetState(() {});
+                          },
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: Colors.grey[800],
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 10,
+                            ),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.redAccent),
+                        onPressed: () async {
+                          await CartDb.deleteCartItem(item.id);
+                          s.cart.remove(item);
+                          setSheetState(() {});
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _completeAndPayForSession(s);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.greenAccent.shade700,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 16,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text(
+                  'إتمام ودفع',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
             ],
           ),
@@ -1015,7 +1199,7 @@ $dailyLimitInfo
     return _sessions.where((s) {
       if (s.subscription != null && s.end != null && s.isActive) {
         final minutesLeft = s.end!.difference(now).inMinutes;
-        return minutesLeft <= 10; // قربت تنتهي خلال 10 دقائق
+        return minutesLeft <= 50; // قربت تنتهي خلال 10 دقائق
       }
       return false;
     }).toList();
@@ -1098,6 +1282,8 @@ $dailyLimitInfo
     // await FinanceDb.setDrawerBalance(0.0);
   }
 
+  int get badgeCount =>
+      getExpiringSessions().length + getExpiredSessions().length;
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
@@ -1109,6 +1295,15 @@ $dailyLimitInfo
           backgroundColor: Colors.transparent,
           elevation: 0,
           actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'تحديث الجلسات',
+              onPressed: () {
+                _loadSessions();
+                _loadDrawerBalance(); // دالة تحميل الجلسات
+                if (mounted) setState(() {}); // حدث الـ UI بعد التحديث
+              },
+            ),
             // داخل AppBar.actions: ضع هذا قبل الأيقونات الأخرى أو بعدهم
             Column(
               mainAxisSize: MainAxisSize.min,
@@ -1304,16 +1499,17 @@ $dailyLimitInfo
                       MaterialPageRoute(
                         builder:
                             (_) => ExpiringSessionsPage(
-                              expiring: expiring,
-                              expired: expired,
+                              allSessions: _sessions,
+                              // expiring: expiring,
+                              //  expired: expired,
                             ),
                       ),
                     );
                   },
                 ),
                 // Badge
-                if (getExpiringSessions().isNotEmpty ||
-                    getExpiredSessions().isNotEmpty)
+                if /* (getExpiringSessions().isNotEmpty ||
+                    getExpiredSessions().isNotEmpty)|| */ (badgeCount > 0)
                   Positioned(
                     right: 4,
                     top: 4,
@@ -1324,7 +1520,8 @@ $dailyLimitInfo
                         shape: BoxShape.circle,
                       ),
                       child: Text(
-                        '${getExpiringSessions().length + getExpiredSessions().length}',
+                        '$badgeCount',
+                        // '${getExpiringSessions().length + getExpiredSessions().length}',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 12,
@@ -1338,84 +1535,106 @@ $dailyLimitInfo
           ],
         ),
         body: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(14),
           child: Column(
             children: [
               // ---------------- البحث ----------------
               TextField(
                 controller: _searchCtrl,
-                style: const TextStyle(color: Colors.white),
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+                cursorColor: Colors.blueAccent,
                 decoration: InputDecoration(
-                  labelText: 'ابحث عن مشترك',
-                  labelStyle: const TextStyle(color: Colors.white70),
+                  hintText: 'ابحث عن مشترك',
+                  hintStyle: TextStyle(color: Colors.white70),
                   prefixIcon: const Icon(Icons.search, color: Colors.white70),
                   filled: true,
-                  fillColor: Colors.grey[850],
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide.none,
+                  fillColor: Colors.grey[900],
+                  contentPadding: const EdgeInsets.symmetric(
+                    vertical: 16,
+                    horizontal: 12,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey.shade700),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: Colors.blueAccent,
+                      width: 2,
+                    ),
                   ),
                 ),
-                onChanged: (val) {
-                  setState(() {
-                    _filteredSessions =
-                        val.isEmpty
-                            ? _sessions
-                            : _sessions
-                                .where(
-                                  (s) => s.name.toLowerCase().contains(
-                                    val.toLowerCase(),
-                                  ),
-                                )
-                                .toList();
-                  });
-                },
               ),
+
               const SizedBox(height: 12),
 
               // ---------------- اختيار باقة ----------------
+              // Dropdown
               DropdownButtonFormField<SubscriptionPlan>(
                 value: _selectedPlan,
-                dropdownColor: Colors.grey[850],
-                style: const TextStyle(color: Colors.white),
+                dropdownColor: Colors.grey[900],
+                style: const TextStyle(color: Colors.white, fontSize: 16),
                 decoration: InputDecoration(
                   labelText: "اختر اشتراك (اختياري)",
                   labelStyle: const TextStyle(color: Colors.white70),
                   filled: true,
-                  fillColor: Colors.grey[850],
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide.none,
+                  fillColor: Colors.grey[900],
+                  contentPadding: const EdgeInsets.symmetric(
+                    vertical: 16,
+                    horizontal: 12,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey.shade700),
+                  ),
+                  focusedBorder: const OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                    borderSide: BorderSide(color: Colors.blueAccent, width: 2),
                   ),
                 ),
                 items:
-                    AdminDataService.instance.subscriptions
-                        .map(
-                          (s) => DropdownMenuItem(
-                            value: s,
-                            child: Text("${s.name} - ${s.price} ج"),
-                          ),
-                        )
-                        .toList(),
+                    AdminDataService.instance.subscriptions.map((s) {
+                      return DropdownMenuItem(
+                        value: s,
+                        child: Text(
+                          "${s.name} - ${s.price} ج",
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      );
+                    }).toList(),
                 onChanged: (val) => setState(() => _selectedPlan = val),
               ),
+
               const SizedBox(height: 12),
 
-              // ---------------- اسم العميل + زر التسجيل ----------------
+              // اسم العميل + زر التسجيل
               Row(
                 children: [
                   Expanded(
                     child: TextField(
                       controller: _nameCtrl,
-                      style: const TextStyle(color: Colors.white),
+                      style: const TextStyle(color: Colors.white, fontSize: 16),
+                      cursorColor: Colors.blueAccent,
                       decoration: InputDecoration(
                         hintText: 'اسم العميل',
                         hintStyle: const TextStyle(color: Colors.white70),
                         filled: true,
-                        fillColor: Colors.grey[850],
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide.none,
+                        fillColor: Colors.grey[900],
+                        contentPadding: const EdgeInsets.symmetric(
+                          vertical: 16,
+                          horizontal: 12,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: Colors.grey.shade700),
+                        ),
+                        focusedBorder: const OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                          borderSide: BorderSide(
+                            color: Colors.blueAccent,
+                            width: 2,
+                          ),
                         ),
                       ),
                     ),
@@ -1424,13 +1643,22 @@ $dailyLimitInfo
                   ElevatedButton(
                     onPressed: _startSession,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blueGrey[700],
+                      backgroundColor: Colors.blueAccent,
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
+                        horizontal: 24,
                         vertical: 16,
                       ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
-                    child: const Text('ابدأ تسجيل'),
+                    child: const Text(
+                      'ابدأ تسجيل',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -1443,22 +1671,64 @@ $dailyLimitInfo
                   length: 3,
                   child: Column(
                     children: [
-                      const TabBar(
-                        tabs: [
-                          Tab(text: "مشتركين باقات"),
-                          Tab(text: "مشتركين حر"),
-                          Tab(text: "المنتجات"),
-                        ],
+                      Container(
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[850], // خلفية الـ TabBar
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: TabBar(
+                          indicatorPadding: EdgeInsets.zero,
+                          indicatorSize: TabBarIndicatorSize.label,
+                          indicator: BoxDecoration(
+                            color: Colors.blueAccent,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          labelColor: Colors.white,
+                          unselectedLabelColor: Colors.white70,
+                          tabs: const [
+                            Tab(
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 24,
+                                  vertical: 12,
+                                ),
+                                child: Text("مشتركين باقات"),
+                              ),
+                            ),
+                            Tab(
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 24,
+                                  vertical: 12,
+                                ),
+                                child: Text("مشتركين حر"),
+                              ),
+                            ),
+                            Tab(
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 24,
+                                  vertical: 12,
+                                ),
+                                child: Text("المنتجات"),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
+                      const SizedBox(height: 8),
                       Expanded(
                         child: TabBarView(
                           children: [
-                            AdminSubscribersPagee(),
-                            //_buildSubscribersList3(withPlan: true),
-                            // المشتركين باقات
-                            _buildSubscribersList(withPlan: false),
-
-                            _buildSalesList(),
+                            AdminSubscribersPagee(), // المشتركين باقات
+                            _buildSubscribersList(
+                              withPlan: false,
+                            ), // المشتركين حر
+                            _buildSalesList(), // المنتجات
                           ],
                         ),
                       ),
@@ -1644,14 +1914,115 @@ $dailyLimitInfo
   }
 
   /// 🔹 دالة تبني لستة المشتركين
-
   Widget _buildSubscribersList({required bool withPlan}) {
+    final searchText = _searchCtrl.text.toLowerCase();
+    final filtered =
+        _sessions.where((s) {
+          final matchesType = withPlan ? s.type == "باقة" : s.type == "حر";
+          final matchesSearch = s.name.toLowerCase().contains(searchText);
+          return matchesType && matchesSearch;
+        }).toList();
+
+    if (filtered.isEmpty)
+      return const Center(
+        child: Text("لا يوجد بيانات", style: TextStyle(color: Colors.white70)),
+      );
+
+    return ListView.builder(
+      itemCount: filtered.length,
+      itemBuilder: (context, i) {
+        final s = filtered[i];
+        final spentMinutes = getSessionMinutes(s);
+        final endTime = getSubscriptionEnd(s);
+
+        String timeInfo =
+            s.subscription != null
+                ? (endTime != null
+                    ? "من: ${s.start.toLocal()} ⇢ ينتهي: ${endTime.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة"
+                    : "من: ${s.start.toLocal()} ⇢ غير محدود ⇢ مضى: ${spentMinutes} دقيقة")
+                : "من: ${s.start.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة";
+
+        return Card(
+          color: Colors.grey[850],
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  s.name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${s.isActive ? (s.isPaused ? "متوقف مؤقت" : "نشط") : "انتهت"} - $timeInfo',
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed:
+                            s.isActive ? () => _togglePauseSessionFor(s) : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blueGrey[700], // زر رئيسي
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: Text(s.isPaused ? 'استئناف' : 'ايقاف مؤقت'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed:
+                            s.isActive && !s.isPaused
+                                ? () async {
+                                  setState(() => _selectedSession = s);
+                                  await showModalBottomSheet(
+                                    context: context,
+                                    builder: (_) => _buildAddProductsAndPay(s),
+                                  );
+                                }
+                                : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue[700], // زر الدفع
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: const Text('اضف & دفع'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /* Widget _buildSubscribersList({required bool withPlan}) {
     // فلترة مباشرة من _sessions
-    /* final filtered =
+    */ /* final filtered =
         _sessions.where((s) {
           if (withPlan) return s.type == "باقة";
           return s.type == "حر";
-        }).toList();*/
+        }).toList();*/ /*
     final searchText = _searchCtrl.text.toLowerCase();
     final filtered =
         _sessions.where((s) {
@@ -1709,7 +2080,7 @@ $dailyLimitInfo
         );
       },
     );
-  }
+  }*/
 
   Widget _buildSubscribersList3({required bool withPlan}) {
     final searchText = _searchCtrl.text.toLowerCase();

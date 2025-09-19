@@ -180,6 +180,7 @@ CREATE TABLE sales(
   }
 }
 */
+import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart';
 
@@ -196,13 +197,14 @@ class DbHelper {
     final databaseFactory = databaseFactoryFfi;
 
     final dbPath = await databaseFactory.getDatabasesPath();
-    final path = join(dbPath, 'workspace.db');
+    final path = join(dbPath, 'workspace4.db');
 
     _database = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
         version: 1,
         onCreate: _onCreate,
+
         onOpen: (db) async {
           await _ensureSalesColumns(db);
           await _ensureFinanceTables(db);
@@ -245,6 +247,7 @@ class DbHelper {
         isActive INTEGER,
         isPaused INTEGER,
         elapsedMinutes INTEGER,
+          frozenMinutes INTEGER DEFAULT 0, 
         type TEXT,
         paidMinutes INTEGER DEFAULT 0,
         pauseStart INTEGER,
@@ -410,6 +413,7 @@ class DbHelper {
     try {
       final cols = await db.rawQuery('PRAGMA table_info(sessions)');
       final colNames = cols.map((c) => c['name'] as String).toList();
+
       if (!colNames.contains('events')) {
         await db.execute('ALTER TABLE sessions ADD COLUMN events TEXT');
       }
@@ -426,21 +430,40 @@ class DbHelper {
       if (!colNames.contains('resumeDate')) {
         await db.execute('ALTER TABLE sessions ADD COLUMN resumeDate INTEGER');
       }
+      if (!colNames.contains('savedSubscriptionEnd')) {
+        await db.execute(
+          'ALTER TABLE sessions ADD COLUMN savedSubscriptionEnd TEXT',
+        );
+      }
+      if (!colNames.contains('savedSubscriptionConvertedAt')) {
+        await db.execute(
+          'ALTER TABLE sessions ADD COLUMN savedSubscriptionConvertedAt INTEGER',
+        );
+      }
+      // جديد: ensure runningSince exists (INTEGER msSinceEpoch)
+      if (!colNames.contains('runningSince')) {
+        await db.execute(
+          'ALTER TABLE sessions ADD COLUMN runningSince INTEGER',
+        );
+        debugPrint('[_ensureSessionsColumns] Added runningSince column');
+      }
 
-      if (!colNames.contains('resumeNextDayRequested')) {
+      // ===== جديد: ensure frozenMinutes exists =====
+      if (!colNames.contains('frozenMinutes')) {
         await db.execute(
-          'ALTER TABLE sessions ADD COLUMN resumeNextDayRequested INTEGER DEFAULT 0',
+          'ALTER TABLE sessions ADD COLUMN frozenMinutes INTEGER DEFAULT 0',
         );
+        debugPrint('[_ensureSessionsColumns] Added frozenMinutes column');
       }
-      if (!colNames.contains('resumeDate')) {
-        await db.execute('ALTER TABLE sessions ADD COLUMN resumeDate INTEGER');
-      }
-      if (!colNames.contains('savedSubscriptionJson')) {
+      if (!colNames.contains('elapsedMinutesPayg')) {
         await db.execute(
-          'ALTER TABLE sessions ADD COLUMN savedSubscriptionJson TEXT',
+          'ALTER TABLE sessions ADD COLUMN elapsedMinutesPayg INTEGER DEFAULT 0;',
         );
+        debugPrint('[_ensureSessionsColumns] Added elapsedMinutesPayg column');
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[_ensureSessionsColumns] migration error: $e');
+    }
   }
 
   Future<void> _ensureFinanceTables(Database db) async {

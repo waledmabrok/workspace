@@ -266,19 +266,23 @@ class Session {
   bool isActive;
   bool isPaused;
   int elapsedMinutes;
+  // للحر
+  int frozenMinutes;
+  // للباقة
+  int elapsedMinutesPayg;
   List<CartItem> cart;
   String type; // "باقة" أو "حر"
-  int paidMinutes; // عدد الدقائق المدفوعة مسبقًا
+  int paidMinutes;
   DateTime? pauseStart;
   final String? customerId;
+  DateTime? runningSince;
 
-  // ===== جديد: سجل الأحداث (timeline) محفوظ كـ List of maps ثم يُسجل في DB JSON =====
   List<Map<String, dynamic>> events;
-
-  // حقول استكمال الباقة (قد تكون موجودة عندك سابقًا — احتفظ بها)
   String? savedSubscriptionJson;
   bool? resumeNextDayRequested;
   DateTime? resumeDate;
+  DateTime? savedSubscriptionEnd;
+  DateTime? savedSubscriptionConvertedAt;
 
   Session({
     required this.id,
@@ -290,15 +294,20 @@ class Session {
     this.isActive = true,
     this.isPaused = false,
     this.elapsedMinutes = 0,
+    this.frozenMinutes = 0, // جديد
+    this.elapsedMinutesPayg = 0,
     this.cart = const [],
     required this.type,
     this.pauseStart,
     this.paidMinutes = 0,
     this.customerId,
-    this.events = const [], // جديد: افتراضيًا فاضية
+    this.events = const [],
     this.savedSubscriptionJson,
     this.resumeNextDayRequested,
     this.resumeDate,
+    this.savedSubscriptionEnd,
+    this.savedSubscriptionConvertedAt,
+    this.runningSince,
   });
 
   Map<String, dynamic> toMap() {
@@ -312,15 +321,20 @@ class Session {
       'isActive': isActive ? 1 : 0,
       'isPaused': isPaused ? 1 : 0,
       'elapsedMinutes': elapsedMinutes,
+      'frozenMinutes': frozenMinutes, // جديد
+      'elapsedMinutesPayg': elapsedMinutesPayg,
       'type': type,
       'pauseStart': pauseStart?.millisecondsSinceEpoch,
       'paidMinutes': paidMinutes,
       'customerId': customerId,
-      // ===== حفظ events كـ JSON =====
       'events': events.isNotEmpty ? jsonEncode(events) : null,
       'savedSubscriptionJson': savedSubscriptionJson,
       'resumeNextDayRequested': resumeNextDayRequested == true ? 1 : 0,
       'resumeDate': resumeDate?.millisecondsSinceEpoch,
+      'savedSubscriptionEnd': savedSubscriptionEnd?.toIso8601String(),
+      'savedSubscriptionConvertedAt':
+          savedSubscriptionConvertedAt?.millisecondsSinceEpoch,
+      'runningSince': runningSince?.millisecondsSinceEpoch,
     };
   }
 
@@ -351,6 +365,8 @@ class Session {
       isActive: (map['isActive'] as int?) == 1,
       isPaused: (map['isPaused'] as int?) == 1,
       elapsedMinutes: map['elapsedMinutes'] as int? ?? 0,
+      frozenMinutes: map['frozenMinutes'] as int? ?? 0, // جديد
+      elapsedMinutesPayg: map['elapsedMinutesPayg'] as int? ?? 0, // جديد
       cart: [],
       type: map['type'] as String? ?? (plan != null ? "باقة" : "حر"),
       pauseStart:
@@ -366,11 +382,23 @@ class Session {
           map['resumeDate'] != null
               ? DateTime.fromMillisecondsSinceEpoch(map['resumeDate'] as int)
               : null,
+      savedSubscriptionEnd:
+          map['savedSubscriptionEnd'] != null
+              ? DateTime.parse(map['savedSubscriptionEnd'] as String)
+              : null,
+      savedSubscriptionConvertedAt:
+          map['savedSubscriptionConvertedAt'] != null
+              ? DateTime.fromMillisecondsSinceEpoch(
+                map['savedSubscriptionConvertedAt'] as int,
+              )
+              : null,
+      runningSince:
+          map['runningSince'] != null
+              ? DateTime.fromMillisecondsSinceEpoch(map['runningSince'] as int)
+              : null,
     );
   }
 
-  /// مساعد: اضف حدث للسجل مع حفظ تلقائي في الذاكرة (لا تحفظ في DB هنا — النقطة الأعلى تحفظ بعد استدعاء SessionDb.updateSession)
-  // models.dart
   void addEvent(String action, {Map<String, dynamic>? meta}) {
     events.add({
       'ts': DateTime.now().toIso8601String(),
@@ -378,8 +406,6 @@ class Session {
       'meta': meta ?? {},
     });
   }
-
-  // مكان الاستدعاء
 }
 
 /// ---------------- CartItem ----------------

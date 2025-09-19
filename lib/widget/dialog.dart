@@ -28,15 +28,10 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
   Customer? _currentCustomer;
   double _drawerBalance = 0.0;
   int getSessionMinutes(Session s) {
-    // invariant:
-    // - s.elapsedMinutes = مجموع دقائق الفترات المنتهية سابقاً
-    // - s.pauseStart != null فقط عندما تكون الجلسة "تشغّل" (running)
-    if (s.isPaused) {
-      return s.elapsedMinutes;
-    } else {
-      final since = s.pauseStart ?? s.start;
-      return s.elapsedMinutes + DateTime.now().difference(since).inMinutes;
-    }
+    if (s.type != 'حر') return 0; // مش حر → ما نحسبش وقت
+    if (s.isPaused) return s.elapsedMinutesPayg;
+    final since = s.runningSince ?? s.start;
+    return s.elapsedMinutesPayg + DateTime.now().difference(since).inMinutes;
   }
 
   Future<void> _loadDrawerBalance() async {
@@ -82,12 +77,13 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
   Widget build(BuildContext context) {
     final s = widget.session;
 
-    final totalMinutes = getSessionMinutes(s);
+    final totalMinutes = s.type == 'حر' ? getSessionMinutes(s) : 0;
     final minutesToCharge = (totalMinutes - s.paidMinutes).clamp(
       0,
       totalMinutes,
     );
-    final timeCharge = _calculateTimeChargeFromMinutes(minutesToCharge);
+    final timeCharge =
+        s.type == 'حر' ? _calculateTimeChargeFromMinutes(minutesToCharge) : 0.0;
     final productsTotal = s.cart.fold(0.0, (sum, item) => sum + item.total);
     final finalTotal = widget.fixedAmount ?? timeCharge + productsTotal;
 
@@ -205,15 +201,20 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                   );
                 }
 
-                // تحديث دقائق الدفع
-                s.paidMinutes += minutesToCharge;
-                s.amountPaid += paidAmount;
+                final now = DateTime.now();
+                if (s.type == "باقة" && s.runningSince != null) {
+                  final consumed = now.difference(s.runningSince!).inMinutes;
+                  s.elapsedMinutes += consumed; // سجل الوقت اللي مضى
+                  s.runningSince = now; // أو null لو وقفتها بالكامل
+                }
 
-                // ---- قفل الجلسة وتحديث DB ----
+                // بعد كده قفل الجلسة أو خليها تعمل resume حسب منطقك
                 setState(() {
-                  s.isActive = false;
-                  s.isPaused = false;
+                  s.isActive = true;
+                  s.isPaused = false; // لو عايز العداد يشتغل تاني
                 });
+                s.cart.clear(); // 🟢 مسح المنتجات بعد الدفع
+
                 await SessionDb.updateSession(s);
 
                 // حفظ المبيعة كما هي

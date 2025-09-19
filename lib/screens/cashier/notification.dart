@@ -1,16 +1,45 @@
 import 'package:flutter/material.dart';
-
 import '../../core/models.dart';
 
-class ExpiringSessionsPage extends StatelessWidget {
-  final List<Session> expiring;
-  final List<Session> expired;
+class ExpiringSessionsPage extends StatefulWidget {
+  final List<Session> allSessions;
 
-  const ExpiringSessionsPage({
-    super.key,
-    required this.expiring,
-    required this.expired,
-  });
+  const ExpiringSessionsPage({super.key, required this.allSessions});
+
+  @override
+  State<ExpiringSessionsPage> createState() => _ExpiringSessionsPageState();
+}
+
+class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
+  List<Session> expiring = [];
+  List<Session> expired = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _checkExpiring(); // أول حساب
+  }
+
+  void _checkExpiring() {
+    final now = DateTime.now();
+    final e = <Session>[];
+    final x = <Session>[];
+
+    for (var s in widget.allSessions) {
+      if (s.subscription == null || s.end == null) continue;
+      final remaining = s.end!.difference(now);
+      if (remaining.inMinutes <= 0) {
+        x.add(s);
+      } else if (remaining.inMinutes <= 60) {
+        e.add(s);
+      }
+    }
+
+    setState(() {
+      expiring = e;
+      expired = x;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +61,8 @@ class ExpiringSessionsPage extends StatelessWidget {
                     (s) => ListTile(
                       title: Text(s.name),
                       subtitle: Text(
-                        "ينتهي في: ${s.end!.toLocal()} - باقي: ${s.end!.difference(DateTime.now()).inMinutes} دقيقة",
+                        "ينتهي في: ${s.end!.toLocal()} - باقي: "
+                        "${s.end!.difference(DateTime.now()).inMinutes} دقيقة",
                       ),
                     ),
                   ),
@@ -61,6 +91,10 @@ class ExpiringSessionsPage extends StatelessWidget {
               ),
           ],
         ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _checkExpiring, // تحديث يدوي
+        child: const Icon(Icons.refresh),
       ),
     );
   }
