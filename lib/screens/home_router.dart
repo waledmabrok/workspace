@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:math';
 
 import '../core/data_service.dart';
+import '../core/db_helper_shifts.dart';
 import 'admin/admin_dashboard.dart' show AdminDashboard;
 import 'cashier/cashier_screen.dart';
 
@@ -16,10 +17,19 @@ class _HomeRouterState extends State<HomeRouter> {
   @override
   void initState() {
     super.initState();
-   // _loadPasswords();
+    // _loadPasswords();
   }
 
-/*  Future<void> _loadPasswords() async {
+  String? cashierPassword;
+
+  Future<void> loadPasswords() async {
+    final cashiers = await CashierDb.getAll();
+    if (cashiers.isNotEmpty) {
+      cashierPassword = cashiers.first["password"];
+    }
+  }
+
+  /*  Future<void> _loadPasswords() async {
     await AdminDataService.instance.loadPasswords();
     setState(() {}); // يعمل تحديث عشان يتحدث الباسورد في الواجهة
   }*/

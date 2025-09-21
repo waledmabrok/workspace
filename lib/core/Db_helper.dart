@@ -1,189 +1,9 @@
-/*
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:path/path.dart';
-
-class DbHelper {
-  DbHelper._();
-  static final DbHelper instance = DbHelper._();
-
-  static Database? _database;
-
-  Future<Database> get database async {
-    if (_database != null) return _database!;
-
-    // تهيئة FFI للويندوز/لينكس
-    sqfliteFfiInit();
-    final databaseFactory = databaseFactoryFfi;
-
-    final dbPath = await databaseFactory.getDatabasesPath();
-    final path = join(dbPath, 'workspace.db');
-
-    _database = await databaseFactory.openDatabase(
-      path,
-      options: OpenDatabaseOptions(
-        version: 9,
-        onCreate: _onCreate,
-        onUpgrade: _onUpgrade,
-      ),
-    );
-
-    return _database!;
-  }
-
-  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // الترقية للنسخ القديمة <8 (كودك القديم كان يتعامل مع <8)
-    if (oldVersion < 9) {
-      // ... (احتفظ بما لديك سابقًا) ...
-      // جلب قائمة الأعمدة في جدول sessions
-      final columns = await db.rawQuery('PRAGMA table_info(sessions)');
-      final columnNames = columns.map((c) => c['name'] as String).toList();
-
-      if (!columnNames.contains('type')) {
-        await db.execute(
-          'ALTER TABLE sessions ADD COLUMN type TEXT DEFAULT "حر"',
-        );
-      }
-
-      if (!columnNames.contains('pauseStart')) {
-        await db.execute('ALTER TABLE sessions ADD COLUMN pauseStart INTEGER');
-      }
-      if (!columnNames.contains('paidMinutes')) {
-        await db.execute(
-          'ALTER TABLE sessions ADD COLUMN paidMinutes INTEGER DEFAULT 0',
-        );
-      }
-
-      // أي تغييرات أخرى للجداول لو محتاج
-
-      // أي تغييرات أخرى للجداول
-      await db.execute('''
-      CREATE TABLE IF NOT EXISTS expenses(
-        id TEXT PRIMARY KEY,
-        title TEXT,
-        amount REAL,
-        date INTEGER
-      )
-    ''');
-      await db.execute('''
-      CREATE TABLE IF NOT EXISTS sales(
-        id TEXT PRIMARY KEY,
-        description TEXT,
-        amount REAL,
-        date INTEGER
-      )
-    ''');
-    }
-  }
-
-  Future<void> _onCreate(Database db, int version) async {
-    // جدول إعدادات التسعير (صف واحد فقط)
-    await db.execute('''
-      CREATE TABLE pricing_settings (
-        id INTEGER PRIMARY KEY,
-        firstFreeMinutes INTEGER,
-        firstHourFee REAL,
-        perHourAfterFirst REAL,
-        dailyCap REAL
-      )
-    ''');
-
-    // أول إدخال افتراضي
-    await db.insert("pricing_settings", {
-      'id': 1,
-      'firstFreeMinutes': 15,
-      'firstHourFee': 30,
-      'perHourAfterFirst': 20,
-      'dailyCap': 150,
-    });
-
-    // جدول الجلسات
-    // جدول الجلسات
-    await db.execute('''
-  CREATE TABLE sessions(
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    start INTEGER, -- نخزن كـ timestamp
-    end INTEGER,
-    amountPaid REAL,
-    subscriptionId TEXT,
-    isActive INTEGER,
-    isPaused INTEGER,
-    elapsedMinutes INTEGER,
-      type TEXT, -- 🟢 العمود الجديد
-      paidMinutes INTEGER DEFAULT 0,
-
-       pauseStart INTEGER
-  )
-''');
-
-    // جدول الاشتراكات
-    await db.execute('''
-      CREATE TABLE subscriptions (
-        id TEXT PRIMARY KEY,
-        name TEXT,
-        durationType TEXT,
-        durationValue INTEGER,
-        price REAL,
-        dailyUsageType TEXT,
-        dailyUsageHours INTEGER,
-        weeklyHours TEXT,
-        isUnlimited INTEGER
-      )
-    ''');
-
-    // جدول المنتجات
-    await db.execute('''
-      CREATE TABLE products (
-        id TEXT PRIMARY KEY,
-        name TEXT,
-        price REAL,
-        stock INTEGER
-      )
-    ''');
-    await db.execute('''
-    CREATE TABLE cart_items(
-      id TEXT PRIMARY KEY,
-      sessionId TEXT,
-      productId TEXT,
-      qty INTEGER
-    )
-  ''');
-    await db.execute('''
-CREATE TABLE expenses(
-  id TEXT PRIMARY KEY,
-  title TEXT,
-  amount REAL,
-  date INTEGER
-)
-''');
-
-    await db.execute('''
-CREATE TABLE sales(
-  id TEXT PRIMARY KEY,
-  description TEXT,
-  amount REAL,
-  discount REAL, -- 🟢
-  date INTEGER
-)
-
-''');
-    await db.execute('''
-  CREATE TABLE discounts (
-    id TEXT PRIMARY KEY,
-    code TEXT,
-    percent REAL,
-    expiry INTEGER,
-    singleUse INTEGER,
-    used INTEGER
-  )
-''');
-  }
-}
-*/
 import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart';
 
+import 'db_helper_shifts.dart';
+
 class DbHelper {
   DbHelper._();
   static final DbHelper instance = DbHelper._();
@@ -197,12 +17,12 @@ class DbHelper {
     final databaseFactory = databaseFactoryFfi;
 
     final dbPath = await databaseFactory.getDatabasesPath();
-    final path = join(dbPath, 'workspace4.db');
+    final path = join(dbPath, 'workspace6.db');
 
     _database = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 1,
+        version: 6,
         onCreate: _onCreate,
 
         onOpen: (db) async {
@@ -210,11 +30,23 @@ class DbHelper {
           await _ensureFinanceTables(db);
           await _ensureSubscriptionsColumns(db);
           await _ensureSessionsColumns(db);
+          await _ensureShiftsColumns(db);
+          await _ensureShiftTables(db);
+          await migrateSalesTable(db);
         },
       ),
     );
 
     return _database!;
+  }
+
+  Future<void> migrateSalesTable(Database db) async {
+    final cols = await db.rawQuery('PRAGMA table_info(sales)');
+    final colNames = cols.map((c) => c['name'] as String).toList();
+
+    if (!colNames.contains('shiftId')) {
+      await db.execute('ALTER TABLE sales ADD COLUMN shiftId TEXT;');
+    }
   }
 
   // ---------------- onCreate ----------------
@@ -292,6 +124,32 @@ class DbHelper {
       )
     ''');
 
+    // الغرفه
+    await db.execute('''
+      CREATE TABLE  rooms (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  basePrice REAL -- السعر الأساسي للغرفة للساعة أو للعدد الأساسي من الأشخاص
+);
+
+    ''');
+    // الغرفه
+    await db.execute('''
+   CREATE TABLE room_bookings (
+  id TEXT PRIMARY KEY,
+  roomId TEXT,
+  customerName TEXT,
+  numPersons INTEGER,
+  startTime INTEGER,
+  endTime INTEGER, -- هيفضل NULL لحد ما يقفل الكاشير الحجز
+  price REAL,
+  status TEXT DEFAULT 'open', -- open / closed
+  FOREIGN KEY(roomId) REFERENCES rooms(id)
+);
+
+
+    ''');
+
     // المصروفات
     await db.execute('''
       CREATE TABLE expenses(
@@ -305,6 +163,7 @@ class DbHelper {
     // المبيعات
     await db.execute('''
       CREATE TABLE sales(
+      
         id TEXT PRIMARY KEY,
         description TEXT,
         amount REAL,
@@ -312,7 +171,8 @@ class DbHelper {
         date INTEGER,
         paymentMethod TEXT,
         customerId TEXT,
-        customerName TEXT
+        customerName TEXT,
+         shiftId TEXT
       )
     ''');
 
@@ -365,7 +225,17 @@ class DbHelper {
         drawer_balance REAL,
         total_sales REAL
       )
-    ''');
+    '''); // الشيفتات
+    await db.execute('''
+      CREATE TABLE shift_transactions (
+  id TEXT PRIMARY KEY,
+  shiftId TEXT,
+  type TEXT, -- sale / expense
+  amount REAL,
+  description TEXT,
+  createdAt INTEGER,
+  FOREIGN KEY (shiftId) REFERENCES shifts(id)
+) ''');
 
     // إعداد جدول التسعير
     await db.execute('''
@@ -396,6 +266,9 @@ class DbHelper {
         await db.execute(
           'ALTER TABLE sales ADD COLUMN discount REAL DEFAULT 0.0',
         );
+      }
+      if (!colNames.contains('shiftId')) {
+        await db.execute('ALTER TABLE sales ADD COLUMN shiftId TEXT');
       }
       if (!colNames.contains('paymentMethod')) {
         await db.execute('ALTER TABLE sales ADD COLUMN paymentMethod TEXT');
@@ -461,6 +334,14 @@ class DbHelper {
         );
         debugPrint('[_ensureSessionsColumns] Added elapsedMinutesPayg column');
       }
+      if (!colNames.contains('originalSubscriptionId')) {
+        await db.execute(
+          'ALTER TABLE sessions ADD COLUMN originalSubscriptionId TEXT',
+        );
+        debugPrint(
+          '[_ensureSessionsColumns] Added originalSubscriptionId column',
+        );
+      }
     } catch (e) {
       debugPrint('[_ensureSessionsColumns] migration error: $e');
     }
@@ -517,6 +398,37 @@ class DbHelper {
     } catch (_) {}
   }
 
+  Future<void> _ensureShiftsColumns(Database db) async {
+    try {
+      final cols = await db.rawQuery('PRAGMA table_info(shifts)');
+      final colNames = cols.map((c) => c['name'] as String).toList();
+
+      if (!colNames.contains('cashierName')) {
+        await db.execute('ALTER TABLE shifts ADD COLUMN cashierName TEXT');
+      }
+      if (!colNames.contains('openedAt')) {
+        await db.execute('ALTER TABLE shifts ADD COLUMN openedAt TEXT');
+      }
+      if (!colNames.contains('closedAt')) {
+        await db.execute('ALTER TABLE shifts ADD COLUMN closedAt TEXT');
+      }
+      if (!colNames.contains('openingBalance')) {
+        await db.execute('ALTER TABLE shifts ADD COLUMN openingBalance REAL');
+      }
+      if (!colNames.contains('closingBalance')) {
+        await db.execute('ALTER TABLE shifts ADD COLUMN closingBalance REAL');
+      }
+      if (!colNames.contains('totalSales')) {
+        await db.execute('ALTER TABLE shifts ADD COLUMN totalSales REAL');
+      }
+      if (!colNames.contains('totalExpenses')) {
+        await db.execute('ALTER TABLE shifts ADD COLUMN totalExpenses REAL');
+      }
+    } catch (e) {
+      debugPrint('[_ensureShiftsColumns] migration error: $e');
+    }
+  }
+
   // ---------------- تحديث جدول subscriptions ----------------
   Future<void> _ensureSubscriptionsColumns(Database db) async {
     try {
@@ -549,5 +461,129 @@ class DbHelper {
         );
       }
     } catch (_) {}
+  }
+
+  ///===========================sfift
+  Future<void> _ensureShiftTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS shifts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cashierId TEXT,
+      cashierName TEXT,
+      openedAt TEXT,
+      closedAt TEXT,
+      openingBalance REAL,
+      closingBalance REAL,
+      totalSales REAL,
+      totalExpenses REAL
+    )
+  ''');
+  }
+
+  // ---------------- إدارة الشيفت ----------------
+  Future<void> openShift({
+    required String id,
+    required String cashierName,
+    required double openingBalance,
+  }) async {
+    final db = await database;
+    await db.insert("shifts", {
+      "id": id,
+      "cashierName": cashierName,
+      "openedAt": DateTime.now().toIso8601String(),
+      "openingBalance": openingBalance,
+      "closingBalance": null,
+      "totalSales": 0.0,
+      "totalExpenses": 0.0,
+    });
+  }
+
+  Future<void> closeShift(
+    String shiftId,
+    double closingBalance,
+    String cashierName,
+  ) async {
+    final db = await database;
+
+    final sales = await db.rawQuery(
+      "SELECT SUM(amount) as total FROM shift_transactions WHERE shiftId = ? AND type = 'sale'",
+      [shiftId],
+    );
+    final expenses = await db.rawQuery(
+      "SELECT SUM(amount) as total FROM shift_transactions WHERE shiftId = ? AND type = 'expense'",
+      [shiftId],
+    );
+
+    final totalSales = (sales.first["total"] as num?)?.toDouble() ?? 0.0;
+    final totalExpenses = (expenses.first["total"] as num?)?.toDouble() ?? 0.0;
+
+    await db.update(
+      "shifts",
+      {
+        "closedAt": DateTime.now().toIso8601String(),
+        "closingBalance": closingBalance,
+        "cashierName": cashierName,
+        "totalSales": totalSales,
+        "totalExpenses": totalExpenses,
+      },
+      where: "id = ?",
+      whereArgs: [shiftId],
+    );
+  }
+
+  // ---------------- الحركات ----------------
+  Future<void> addTransaction({
+    required String id,
+    required String shiftId,
+    required String type, // sale / expense / deposit / withdraw
+    required double amount,
+    required String description,
+  }) async {
+    final db = await database;
+    await db.insert("shift_transactions", {
+      "id": id,
+      "shiftId": shiftId,
+      "type": type,
+      "amount": amount,
+      "description": description,
+      "createdAt": DateTime.now().toIso8601String(),
+    });
+  }
+
+  // ---------------- الاستعلامات ----------------
+  Future<List<Map<String, dynamic>>> getShifts() async {
+    final db = await database;
+    return db.query("shifts", orderBy: "openedAt DESC");
+  }
+
+  Future<List<Map<String, dynamic>>> getTransactions(String shiftId) async {
+    final db = await database;
+    return db.query(
+      "shift_transactions",
+      where: "shiftId = ?",
+      whereArgs: [shiftId],
+      orderBy: "createdAt DESC",
+    );
+  }
+
+  Future<Map<String, double>> getShiftSummary(String shiftId) async {
+    final db = await database;
+
+    final sales = await db.rawQuery(
+      "SELECT SUM(amount) as total FROM shift_transactions WHERE shiftId = ? AND type = 'sale'",
+      [shiftId],
+    );
+    final expenses = await db.rawQuery(
+      "SELECT SUM(amount) as total FROM shift_transactions WHERE shiftId = ? AND type = 'expense'",
+      [shiftId],
+    );
+
+    return {
+      "sales": (sales.first["total"] as num?)?.toDouble() ?? 0.0,
+      "expenses": (expenses.first["total"] as num?)?.toDouble() ?? 0.0,
+      "profit":
+          ((sales.first["total"] as num?)?.toDouble() ?? 0.0) -
+          ((expenses.first["total"] as num?)?.toDouble() ?? 0.0),
+    };
   }
 }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:workspace/screens/cashier/user_Subscripe.dart';
+import '../../core/Db_helper.dart';
 import '../../core/FinanceDb.dart';
+import '../../core/db_helper_Subscribe.dart';
 import '../../core/db_helper_cart.dart';
 import '../../core/db_helper_customers.dart';
 import '../../core/db_helper_discounts.dart';
@@ -12,6 +14,7 @@ import 'dart:async';
 import '../../widget/dialog.dart';
 import '../admin/CustomerSubscribe.dart';
 import 'notification.dart';
+import 'Rooms.dart';
 import '../../core/db_helper_customer_balance.dart';
 
 class CashierScreen extends StatefulWidget {
@@ -25,7 +28,7 @@ class _CashierScreenState extends State<CashierScreen> {
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _qtyCtrl = TextEditingController(text: '1');
   final TextEditingController _searchCtrl = TextEditingController();
-
+  String? _currentShiftId;
   // داخل class _CashierScreenState
   String get _currentCustomerName {
     // إذا فيه جلسة مختارة، استخدم اسمها، وإلا خذ الاسم من حقل الإدخال
@@ -93,6 +96,7 @@ class _CashierScreenState extends State<CashierScreen> {
   @override
   void initState() {
     super.initState();
+    _loadCurrentShift();
     _currentCustomer = AdminDataService.instance.customers.firstWhereOrNull(
       (c) => c.name == _currentCustomerName,
     );
@@ -323,6 +327,8 @@ class _CashierScreenState extends State<CashierScreen> {
       cart: [],
       amountPaid: 0.0,
       type: currentPlan != null ? "باقة" : "حر",
+      savedDailySpent: 0,
+      lastDailySpentCheckpoint: now,
       // لو موديل Session عنده customerId أو customer حطّه هنا لو متاح:
       // customerId: customer?.id,
     );
@@ -333,7 +339,18 @@ class _CashierScreenState extends State<CashierScreen> {
       final discountPercent = _appliedDiscount?.percent ?? 0.0;
       final discountValue = basePrice * (discountPercent / 100);
       final finalPrice = basePrice - discountValue;
+      final paid = await showSubscriptionPaymentDialog(
+        context,
+        customer: customer!,
+        currentPlan: currentPlan,
+        basePrice: basePrice,
+        discountPercent: discountPercent,
+      );
 
+      if (paid != true) {
+        // لو لغى الدفع → متعملش Session أصلاً
+        return;
+      }
       session.amountPaid = finalPrice;
 
       final sale = Sale(
@@ -396,7 +413,7 @@ $dailyLimitInfo
 """);
 
         // ممكن تعرضها كـ Dialog بدل الطباعة:
-        await showDialog(
+        /*     await showDialog(
           context: context,
           builder:
               (_) => AlertDialog(
@@ -416,7 +433,7 @@ $dailyLimitInfo
                   ),
                 ],
               ),
-        );
+        );*/
 
         // 🔻 باقي الكود كما هو
         if (_appliedDiscount?.singleUse == true) {
@@ -466,6 +483,112 @@ $dailyLimitInfo
       _appliedDiscount = null;
       _discountCodeCtrl.clear();
     });
+  }
+
+  Future<bool?> showSubscriptionPaymentDialog(
+    BuildContext context, {
+    required Customer customer,
+    required SubscriptionPlan currentPlan,
+    required double basePrice,
+    double discountPercent = 0.0,
+  }) async {
+    final paidCtrl = TextEditingController();
+    final discountValue = basePrice * (discountPercent / 100);
+    final finalPrice = basePrice - discountValue;
+
+    return await showDialog<bool>(
+      context: context,
+      barrierDismissible: false, // لازم يختار زرار
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final paidAmount = double.tryParse(paidCtrl.text) ?? 0.0;
+            final diff = paidAmount - finalPrice;
+
+            String diffText;
+            if (diff == 0) {
+              diffText = '✅ دفع كامل';
+            } else if (diff > 0) {
+              diffText = '💰 الباقي للعميل: ${diff.toStringAsFixed(2)} ج';
+            } else {
+              diffText = '💸 على العميل: ${(diff.abs()).toStringAsFixed(2)} ج';
+            }
+
+            return AlertDialog(
+              title: Text("إيصال دفع - ${currentPlan.name}"),
+              content: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("الباقة: ${currentPlan.name}"),
+                    Text("السعر الأساسي: ${basePrice.toStringAsFixed(2)} ج"),
+                    if (discountPercent > 0)
+                      Text(
+                        "خصم: $discountPercent% (-${discountValue.toStringAsFixed(2)} ج)",
+                      ),
+                    const Divider(),
+                    Text(
+                      "المطلوب: ${finalPrice.toStringAsFixed(2)} ج",
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: paidCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: "المبلغ المدفوع",
+                      ),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      diffText,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                ElevatedButton(
+                  onPressed: () async {
+                    if (paidAmount < finalPrice) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('⚠️ المبلغ المدفوع أقل من المطلوب'),
+                        ),
+                      );
+                      return;
+                    }
+
+                    final sale = Sale(
+                      id: generateId(),
+                      description:
+                          "اشتراك ${currentPlan.name} للعميل ${customer.name}"
+                          "${discountPercent > 0 ? " (خصم $discountPercent%)" : ""}",
+                      amount: finalPrice,
+                    );
+
+                    Navigator.pop(ctx, true); // ✅ هترجع true
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          '✅ تم دفع اشتراك ${currentPlan.name} (${finalPrice.toStringAsFixed(2)} ج)',
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text("تأكيد الدفع"),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false), // ✅ هترجع false
+                  child: const Text("إلغاء"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _togglePauseSessionFor(Session s) async {
@@ -1217,77 +1340,126 @@ $dailyLimitInfo
         getExpiringSessions().length + getExpiredSessions().length;
   }
 
-  Future<void> _closeShift() async {
-    // 1. احسب المبيعات للشيفت فقط للجلسات اللي خلصت أو المنتجات اللي مدفوعة
-    final cashSales = AdminDataService.instance.sales
-        .where((s) => s.paymentMethod == 'cash')
-        .fold(0.0, (sum, s) => sum + s.amount);
+  Future<void> _loadCurrentShift() async {
+    _currentShiftId = await getCurrentShiftId();
+    setState(() {});
+  }
 
-    final walletSales = AdminDataService.instance.sales
-        .where((s) => s.paymentMethod == 'wallet')
-        .fold(0.0, (sum, s) => sum + s.amount);
+  Future<void> _openShift() async {
+    final cashierNameCtrl = TextEditingController();
 
-    // 2. احسب المصاريف
-    final expenses = AdminDataService.instance.expenses.fold(
-      0.0,
-      (sum, e) => sum + e.amount,
-    );
-
-    // 3. الرصيد الحالي للدرج
-    final drawer = AdminDataService.instance.drawerBalance;
-
-    // 4. عرض ملخص للمستخدم
-    await showDialog(
+    final confirmed = await showDialog<bool>(
       context: context,
       builder:
           (_) => AlertDialog(
-            title: const Text('ملخص الشيفت'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('إجمالي مبيعات كاش: ${cashSales.toStringAsFixed(2)} ج'),
-                Text(
-                  'إجمالي مبيعات محفظة: ${walletSales.toStringAsFixed(2)} ج',
-                ),
-                Text('إجمالي مصاريف: ${expenses.toStringAsFixed(2)} ج'),
-                Text('رصيد الدرج الحالي: ${drawer.toStringAsFixed(2)} ج'),
-                Text(
-                  'الربح: ${(cashSales + walletSales - expenses).toStringAsFixed(2)} ج',
-                ),
-              ],
+            title: const Text('فتح شيفت جديد'),
+            content: TextField(
+              controller: cashierNameCtrl,
+              decoration: const InputDecoration(labelText: 'اسم الكاشير'),
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إغلاق'),
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('إلغاء'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('فتح شيفت'),
               ),
             ],
           ),
     );
 
-    // 5. تهيئة الشيفت الجديد بدون حذف الجلسات النشطة
-    setState(() {
-      _sessions = _sessions.where((s) => s.isActive).toList();
+    if (confirmed != true) return;
 
-      // مسح المبيعات والمصاريف للشيفت السابق فقط
-      AdminDataService.instance.sales.clear();
-      AdminDataService.instance.expenses.clear();
-
-      // تحديث رصيد الدرج للبدء من الصفر أو حسب رغبتك
-      //   AdminDataService.instance.drawerBalance = 0.0;
+    final newShiftId = DateTime.now().millisecondsSinceEpoch.toString();
+    final db = await DbHelper.instance.database;
+    await db.insert("shifts", {
+      "id": newShiftId,
+      "cashierName": cashierNameCtrl.text,
+      "openedAt": DateTime.now().toIso8601String(),
+      "openingBalance": await getClosingBalance(),
+      "totalSales": 0.0,
+      "totalExpenses": 0.0,
     });
 
-    // 6. احفظ التغييرات في DB
-    // await FinanceDb.setDrawerBalance(0.0);
+    await _loadCurrentShift();
+    debugPrint("تم فتح شيفت باسم ${cashierNameCtrl.text}");
+  }
+
+  Future<String?> getCurrentShiftId() async {
+    final db = await DbHelper.instance.database;
+    final rows = await db.query('shifts', where: 'closedAt IS NULL', limit: 1);
+    if (rows.isEmpty) return null;
+    return rows.first['id'] as String;
+  }
+
+  Future<double> getClosingBalance() async {
+    final db = await DbHelper.instance.database;
+    final rows = await db.query(
+      'drawer',
+      where: 'id = ?',
+      whereArgs: [1],
+      limit: 1,
+    );
+    return (rows.first['balance'] as num?)?.toDouble() ?? 0.0;
+  }
+
+  Future<void> _closeShift({required String cashierName}) async {
+    final shiftId = await getCurrentShiftId();
+    if (shiftId == null) {
+      debugPrint("لا يوجد شيفت مفتوح للتقفيل");
+      return;
+    }
+
+    final closingBalance = await getClosingBalance();
+
+    await DbHelper.instance.closeShift(shiftId, closingBalance, cashierName);
+
+    debugPrint(
+      "تم تقفيل الشيفت بنجاح باسم $cashierName مع رصيد $closingBalance",
+    );
+  }
+
+  Future<void> _closeCurrentShift() async {
+    final cashierNameCtrl = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (_) => AlertDialog(
+            title: const Text('تأكيد تقفيل الشيفت'),
+            content: TextField(
+              controller: cashierNameCtrl,
+              decoration: const InputDecoration(labelText: 'اسم الكاشير'),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('إلغاء'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('تأكيد'),
+              ),
+            ],
+          ),
+    );
+
+    if (confirmed != true || _currentShiftId == null) return;
+
+    await _closeShift(cashierName: cashierNameCtrl.text);
+    await _loadCurrentShift();
   }
 
   int get badgeCount =>
       getExpiringSessions().length + getExpiredSessions().length;
   @override
   Widget build(BuildContext context) {
+    final isShiftOpen = _currentShiftId != null;
+
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('الكاشير'),
@@ -1323,47 +1495,13 @@ $dailyLimitInfo
                 ),
               ],
             ),
-            IconButton(
-              icon: const Icon(Icons.subscriptions),
-              tooltip: 'الباقات',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => AdminSubscribersPagee()),
-                );
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.lock_clock),
-              tooltip: 'تقفيل الشيفت',
-              onPressed: () async {
-                final confirm = await showDialog<bool>(
-                  context: context,
-                  builder:
-                      (_) => AlertDialog(
-                        title: const Text('تأكيد تقفيل الشيفت'),
-                        content: const Text(
-                          'هل تريد إنهاء الشيفت وحساب كل الإيرادات؟',
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(context, false),
-                            child: const Text('إلغاء'),
-                          ),
-                          ElevatedButton(
-                            onPressed: () => Navigator.pop(context, true),
-                            child: const Text('تأكيد'),
-                          ),
-                        ],
-                      ),
-                );
 
-                if (confirm != true) return;
-
-                // استدعاء دالة تقفيل الشيفت
-                await _closeShift();
-              },
+            IconButton(
+              icon: Icon(isShiftOpen ? Icons.lock_clock : Icons.play_arrow),
+              tooltip: isShiftOpen ? 'تقفيل الشيفت' : 'فتح شيفت',
+              onPressed: isShiftOpen ? _closeCurrentShift : _openShift,
             ),
+
             IconButton(
               icon: const Icon(Icons.add_shopping_cart),
               tooltip: 'إضافة منتجات بدون اسم',
@@ -1668,7 +1806,7 @@ $dailyLimitInfo
               // ---------------- Tabs ----------------
               Expanded(
                 child: DefaultTabController(
-                  length: 3,
+                  length: 4,
                   child: Column(
                     children: [
                       Container(
@@ -1694,7 +1832,7 @@ $dailyLimitInfo
                               child: Padding(
                                 padding: EdgeInsets.symmetric(
                                   horizontal: 24,
-                                  vertical: 12,
+                                  vertical: 8,
                                 ),
                                 child: Text("مشتركين باقات"),
                               ),
@@ -1714,6 +1852,15 @@ $dailyLimitInfo
                                   horizontal: 24,
                                   vertical: 12,
                                 ),
+                                child: Text("الغرف"),
+                              ),
+                            ),
+                            Tab(
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 24,
+                                  vertical: 12,
+                                ),
                                 child: Text("المنتجات"),
                               ),
                             ),
@@ -1725,10 +1872,11 @@ $dailyLimitInfo
                         child: TabBarView(
                           children: [
                             AdminSubscribersPagee(), // المشتركين باقات
-                            _buildSubscribersList(
-                              withPlan: false,
-                            ), // المشتركين حر
-                            _buildSalesList(), // المنتجات
+                            _buildSubscribersList(withPlan: false),
+                            CashierRoomsPage(), // المشتركين حر
+                            _buildSalesList(),
+
+                            // المنتجات
                           ],
                         ),
                       ),
@@ -2597,6 +2745,43 @@ $dailyLimitInfo
       },
     );
   }
+
+  /* Widget _buildDrinksSalesList() {
+    final sales = AdminDataService.instance.sales;
+
+    // جمع كل المنتجات من كل المبيعات
+    final List<Map<String, dynamic>> drinks = [];
+    for (final sale in sales) {
+      for (final item in sale.cart) {
+        drinks.add({
+          'name': item.product.name,
+          'qty': item.qty,
+          'total': item.total,
+          'time': sale.createdAt, // لو عندك وقت البيع
+        });
+      }
+    }
+
+    // ترتيب من الأحدث للأقدم حسب الوقت
+    drinks.sort((a, b) => (b['time'] as DateTime).compareTo(a['time'] as DateTime));
+
+    if (drinks.isEmpty) {
+      return const Center(child: Text("لا يوجد مشاريب مباعة"));
+    }
+
+    return ListView.builder(
+      itemCount: drinks.length,
+      itemBuilder: (context, i) {
+        final item = drinks[i];
+        return Card(
+          child: ListTile(
+            title: Text(item['name']),
+            subtitle: Text("الكمية: ${item['qty']} — المجموع: ${item['total']} ج"),
+          ),
+        );
+      },
+    );
+  }*/
 }
 
 extension FirstWhereOrNullExtension<E> on List<E> {

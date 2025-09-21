@@ -9,8 +9,10 @@ import '../../core/db_helper_Subscribe.dart';
 import '../../core/data_service.dart';
 import '../../core/models.dart';
 import 'CustomerSubscribe.dart';
+import 'MAin_dashboard.dart';
 import 'discounts_page.dart';
 import 'finance_page.dart';
+import 'Room.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -74,6 +76,22 @@ class _AdminDashboardState extends State<AdminDashboard> {
         () => Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => ProductsPage()),
+        ),
+      ),
+      _AdminCardData(
+        'شيفتات',
+        Icons.inventory,
+        () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => DashboardPagee()),
+        ),
+      ),
+      _AdminCardData(
+        'غرف',
+        Icons.laptop,
+        () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => RoomsPage()),
         ),
       ),
       _AdminCardData(

@@ -207,47 +207,120 @@ class _SaleDialogState extends State<SaleDialog> {
 */
 
 import 'package:flutter/material.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../../core/FinanceDb.dart';
 import '../../core/data_service.dart';
 import '../../core/models.dart';
-import '../../core/db_helper.dart'; // <-- افترضنا DbHelper موجود
-import 'dart:math';
+import '../../core/db_helper.dart';
 
-// ===================== Finance Page =====================
+// ===================== Finance Page Daily =====================
 class FinancePage extends StatefulWidget {
   @override
-  State<FinancePage> createState() => _FinancePageState();
+  State<FinancePage> createState() => _FinancePageDailyState();
 }
 
-class _FinancePageState extends State<FinancePage> {
+class _FinancePageDailyState extends State<FinancePage> {
   final AdminDataService ds = AdminDataService.instance;
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadTodayData();
   }
 
-  Future<void> _loadData() async {
-    ds.expenses = await FinanceDb.getExpenses();
-    ds.sales = await FinanceDb.getSales();
+  // -------------------- دوال مساعدة --------------------
+  bool isToday(DateTime date) {
+    final now = DateTime.now();
+    return date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day;
+  }
+
+  DateTime selectedDate = DateTime.now(); // اليوم الافتراضي
+
+  // دالة لاختيار اليوم
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (picked != null && picked != selectedDate) {
+      setState(() {
+        selectedDate = picked;
+        _loadDataForDate(selectedDate); // إعادة تحميل البيانات لليوم الجديد
+      });
+    }
+  }
+
+  // تعديل دالة التحميل لتأخذ التاريخ
+  Future<void> _loadDataForDate(DateTime date) async {
+    final allExpenses = await FinanceDb.getExpenses();
+    final allSales = await FinanceDb.getSales();
+
+    ds.expenses =
+        allExpenses
+            .where(
+              (e) =>
+                  e.date.year == date.year &&
+                  e.date.month == date.month &&
+                  e.date.day == date.day,
+            )
+            .toList();
+
+    ds.sales =
+        allSales
+            .where(
+              (s) =>
+                  s.date.year == date.year &&
+                  s.date.month == date.month &&
+                  s.date.day == date.day,
+            )
+            .toList();
+
     setState(() {});
   }
 
+  Future<void> _loadTodayData() async {
+    final allExpenses = await FinanceDb.getExpenses();
+    final allSales = await FinanceDb.getSales();
+
+    ds.expenses = allExpenses.where((e) => isToday(e.date)).toList();
+    ds.sales = allSales.where((s) => isToday(s.date)).toList();
+
+    setState(() {});
+  }
+
+  double get totalSales => ds.sales.fold(0.0, (sum, s) => sum + s.amount);
+
+  double get totalExpenses => ds.expenses.fold(0.0, (sum, e) => sum + e.amount);
+
+  double get profit => totalSales - totalExpenses;
+
+  // -------------------- واجهة المستخدم --------------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         forceMaterialTransparency: true,
-        title: const Text('المصاريف و الأرباح'),
+        title: const Text('المصاريف و الأرباح اليومية'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
+            // أزرار إضافة مصروف وبيع
             Row(
               children: [
+                ElevatedButton.icon(
+                  onPressed: _pickDate,
+                  icon: const Icon(Icons.calendar_today),
+                  label: Text(
+                    "${selectedDate.day}/${selectedDate.month}/${selectedDate.year}",
+                  ),
+                ),
+                const SizedBox(width: 12),
+
                 ElevatedButton.icon(
                   onPressed: _addExpense,
                   icon: const Icon(Icons.add),
@@ -262,22 +335,26 @@ class _FinancePageState extends State<FinancePage> {
               ],
             ),
             const SizedBox(height: 12),
+
+            // الملخص اليومي
             Card(
               color: const Color(0xFF071022),
               child: ListTile(
-                title: const Text('ملخص'),
+                title: const Text('ملخص اليوم'),
                 subtitle: Text(
-                  'إجمالي المبيعات: ${ds.totalSales.toStringAsFixed(2)}  |  إجمالي المصاريف: ${ds.totalExpenses.toStringAsFixed(2)}',
+                  'إجمالي المبيعات: ${totalSales.toStringAsFixed(2)}  |  إجمالي المصاريف: ${totalExpenses.toStringAsFixed(2)}',
                 ),
-                trailing: Text('الربح: ${ds.profit.toStringAsFixed(2)}'),
+                trailing: Text('الربح: ${profit.toStringAsFixed(2)}'),
               ),
             ),
             const SizedBox(height: 12),
+
+            // قائمة المصاريف والمبيعات اليوم
             Expanded(
               child: ListView(
                 children: [
                   const Text(
-                    'قائمة المصاريف',
+                    'قائمة المصاريف اليوم',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   ...ds.expenses.map(
@@ -292,7 +369,7 @@ class _FinancePageState extends State<FinancePage> {
                   ),
                   const SizedBox(height: 10),
                   const Text(
-                    'سجل المبيعات',
+                    'سجل المبيعات اليوم',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   ...ds.sales.map(
@@ -314,14 +391,16 @@ class _FinancePageState extends State<FinancePage> {
     );
   }
 
+  // -------------------- Dialogs --------------------
   Future<void> _addExpense() async {
     final res = await showDialog<Expense?>(
       context: context,
       builder: (_) => ExpenseDialog(),
     );
     if (res != null) {
-      await FinanceDb.insertExpense(res); // تخزين في الداتا بيز
-      setState(() => ds.expenses.add(res));
+      await FinanceDb.insertExpense(res); // تخزين في DB
+      ds.expenses.add(res);
+      setState(() {});
     }
   }
 
@@ -331,13 +410,14 @@ class _FinancePageState extends State<FinancePage> {
       builder: (_) => SaleDialog(),
     );
     if (res != null) {
-      await FinanceDb.insertSale(res); // تخزين في الداتا بيز
-      setState(() => ds.sales.add(res));
+      await FinanceDb.insertSale(res); // تخزين في DB
+      ds.sales.add(res);
+      setState(() {});
     }
   }
 }
 
-// ===================== Dialogs =====================
+// -------------------- Dialogs --------------------
 class ExpenseDialog extends StatefulWidget {
   @override
   State<ExpenseDialog> createState() => _ExpenseDialogState();

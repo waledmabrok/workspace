@@ -22,6 +22,52 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
   bool _loading = true;
   Timer? _uiTimer;
   Timer? _checkTimer;
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _updateActiveSubscriptionsForNewDay();
+    // مؤقّت واحد فقط مع فحص mounted
+    _expiringTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      if (!mounted) return;
+      checkExpiringSessions(context, _sessions);
+    });
+
+    _loadSessions().then((_) => _applyDailyLimitForAllSessions());
+
+    _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+
+    _checkTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted) return;
+      if (!_loading) _applyDailyLimitForAllSessions();
+    });
+  }
+
+  @override
+  void dispose() {
+    _expiringTimer?.cancel();
+    _uiTimer?.cancel();
+    _checkTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _ensureSnapshot(Session s) async {
+    if (s.subscription != null && s.savedSubscriptionJson == null) {
+      s.savedSubscriptionJson = jsonEncode(s.subscription!.toJson());
+      s.savedSubscriptionEnd = _getSubscriptionEnd(s);
+      s.savedElapsedMinutes = s.elapsedMinutes;
+      s.savedDailySpent = _minutesOverlapWithDate(s, DateTime.now());
+      s.savedSubscriptionConvertedAt = DateTime.now();
+      await SessionDb.updateSession(s);
+      debugPrint("💾 Snapshot auto-saved for ${s.name}");
+    }
+  }
+
   Future<void> checkExpiringSessions(
     BuildContext context,
     List<Session> allSessions,
@@ -92,6 +138,9 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
           s.savedSubscriptionJson = jsonEncode(s.subscription?.toJson());
           s.savedSubscriptionEnd = s.end;
 
+          // مهم: مسح علامة التحويل القديمة لأنها تخص يوم سابق
+          //   s.savedSubscriptionConvertedAt = null;
+
           await SessionDb.updateSession(s);
 
           debugPrint('💾 Updated saved subscription for ${s.name} for new day');
@@ -99,38 +148,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
       }
     }
 
-    // حدث الواجهة بعد التحديث
     if (mounted) setState(() {});
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _updateActiveSubscriptionsForNewDay();
-    // مؤقّت واحد فقط مع فحص mounted
-    _expiringTimer = Timer.periodic(const Duration(minutes: 5), (_) {
-      if (!mounted) return;
-      checkExpiringSessions(context, _sessions);
-    });
-
-    _loadSessions().then((_) => _applyDailyLimitForAllSessions());
-
-    _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
-
-    _checkTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (!mounted) return;
-      if (!_loading) _applyDailyLimitForAllSessions();
-    });
-  }
-
-  @override
-  void dispose() {
-    _expiringTimer?.cancel();
-    _uiTimer?.cancel();
-    _checkTimer?.cancel();
-    super.dispose();
   }
 
   double? _getSubscriptionProgress(Session s) {
@@ -182,9 +200,12 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     if (confirmed != true) return;
 
     // حفظ نسخة الاشتراك القديم لو مش محفوظة
+    // حفظ نسخة الاشتراك القديم لو مش محفوظة
     if (s.savedSubscriptionJson == null && s.subscription != null) {
       s.savedSubscriptionJson = jsonEncode(s.subscription!.toJson());
       s.savedSubscriptionEnd = _getSubscriptionEnd(s);
+      await SessionDb.updateSession(s);
+      debugPrint("💾 Snapshot saved before converting ${s.name} to payg");
     }
 
     // نفّذ التحويل
@@ -300,82 +321,40 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     final now = DateTime.now();
     debugPrint("⏳ [_applyDailyLimitForAllSessions] Checking at $now ...");
 
-    final toUpdate = <Session>[];
+    final toConvert = <Session>[];
 
-    for (var s in List<Session>.from(_sessions)) {
-      debugPrint(
-        "➡️ Session ${s.name} (${s.id}) - type=${s.type}, sub=${s.subscription?.name}",
-      );
-
-      // 1) جلسة حر → نتجاهل
-      if (s.type == 'حر') {
-        debugPrint("   🔒 type is حر => skip");
-        continue;
-      }
-
-      final plan = s.subscription;
-      if (plan == null) {
-        debugPrint("   ❌ no subscription, skip");
-        continue;
-      }
-
-      // 2) لو الجلسة منتهية
+    for (var s in _sessions) {
+      if (!s.isActive) continue;
+      if (s.type == 'حر') continue;
+      if (s.subscription == null) continue;
       if (s.end != null && now.isAfter(s.end!)) {
-        debugPrint("   ⛔ session expired (end reached)");
         s.isActive = false;
-        toUpdate.add(s);
+        await SessionDb.updateSession(s);
         continue;
       }
 
-      // 3) لو الباقة غير محدودة أو مفيش dailyUsageHours
-      if (plan.dailyUsageType != 'limited' || plan.dailyUsageHours == null) {
-        debugPrint("   ℹ️ unlimited or no daily limit, skip");
+      final plan = s.subscription!;
+      if (plan.dailyUsageType != 'limited' || plan.dailyUsageHours == null)
         continue;
-      }
 
-      // 4) احسب الاستهلاك اليومي
-      final spentToday = getSessionMinutesToday(s, now);
-      final allowedToday = (plan.dailyUsageHours ?? 0) * 60;
+      final spentToday = _getMinutesConsumedToday(s, now);
+      final allowedToday = plan.dailyUsageHours! * 60;
+
       debugPrint(
-        "   🕒 spentToday=$spentToday min / allowed=$allowedToday min",
+        "➡️ Session ${s.name}: spentToday=$spentToday / allowed=$allowedToday",
       );
 
       if (spentToday >= allowedToday) {
-        debugPrint("   🚨 limit reached! converting to حر");
-
-        // نسخ بيانات الاشتراك قبل المسح
-        if (s.savedSubscriptionJson == null && s.subscription != null) {
-          s.savedSubscriptionJson = jsonEncode(s.subscription!.toJson());
-          s.savedSubscriptionEnd = _getSubscriptionEnd(s);
-          s.savedSubscriptionConvertedAt = DateTime.now();
-        }
-
-        // التحويل إلى حر
-        s.subscription = null;
-        s.type = 'حر';
-        s.addEvent('converted_to_payg', meta: {'reason': 'daily_limit'});
-
-        toUpdate.add(s);
+        toConvert.add(s);
       }
     }
 
-    // تحديث DB
-    if (toUpdate.isNotEmpty) {
-      for (var s in toUpdate) {
-        debugPrint("💾 updating DB for session ${s.name}");
-        await SessionDb.updateSession(s);
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '${toUpdate.length} جلسة تحولت إلى حر لبلوغها الحد اليومي',
-            ),
-          ),
-        );
-        setState(() {});
-      }
+    // تحويل الجلسات التي وصلت الحد اليومي
+    for (final s in toConvert) {
+      await convertSubscriptionToPayg_CreateNew(s);
     }
+
+    await _loadSessions();
   }
 
   int _minutesOverlapWithDate(Session s, DateTime date) {
@@ -414,20 +393,28 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     return overlap < 0 ? 0 : overlap;
   }
 
-  int getSessionMinutesToday(Session s, DateTime now) {
-    if (s.type == 'حر') return 0; // لو اتحول خلاص
+  int _getMinutesConsumedToday(Session s, DateTime now) {
+    if (s.type == 'حر') return 0;
 
-    final total = getSessionMinutes(s);
     final dayStart = DateTime(now.year, now.month, now.day);
 
-    // بداية الجلسة اللي هنحسب منها
-    final effectiveStart = s.start.isBefore(dayStart) ? dayStart : s.start;
+    DateTime lastCheckpoint;
+    if (s.lastDailySpentCheckpoint == null ||
+        s.lastDailySpentCheckpoint!.isBefore(dayStart)) {
+      lastCheckpoint = s.runningSince ?? s.start;
+      if (lastCheckpoint.isBefore(dayStart)) lastCheckpoint = dayStart;
+      s.savedDailySpent = 0; // إعادة ضبط الحد اليومي
+    } else {
+      lastCheckpoint = s.lastDailySpentCheckpoint!;
+    }
 
-    // لو الجلسة بدأت قبل اليوم، نشيل وقت امبارح من الحساب
-    final diffBeforeToday = effectiveStart.difference(s.start).inMinutes;
-    final todayMinutes = total - (diffBeforeToday < 0 ? 0 : diffBeforeToday);
+    int spentMinutes = now.difference(lastCheckpoint).inMinutes;
+    if (s.savedDailySpent != null) spentMinutes += s.savedDailySpent!;
 
-    return todayMinutes < 0 ? 0 : todayMinutes;
+    s.savedDailySpent = spentMinutes;
+    s.lastDailySpentCheckpoint = now;
+
+    return spentMinutes;
   }
 
   int getSessionMinutes(Session s) {
@@ -547,103 +534,6 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     return amount;
   }
 
-  Future<void> _toggleSession(Session s) async {
-    final now = DateTime.now();
-
-    // =========================
-    // حالة وجود باقة (subscriber)
-    // =========================
-    if (s.subscription != null) {
-      if (!s.isActive) {
-        // بدء الجلسة (من متوقف)
-        s.isActive = true;
-        s.isPaused = false;
-        s.pauseStart = now; // يمثل آخر resume
-        await _saveSessionWithEvent(s, 'started');
-        _maybeNotifyDailyLimitApproaching(s);
-      } else if (s.isPaused) {
-        // استئناف الباقة -> نمدد نهاية الباقة بمدة التجميد
-        if (s.pauseStart != null && s.end != null) {
-          final frozen = now.difference(s.pauseStart!).inMinutes;
-          if (frozen > 0) {
-            s.end = s.end!.add(Duration(minutes: frozen));
-          }
-        }
-        s.isPaused = false;
-        s.pauseStart = now; // يمثل آخر resume
-        await _saveSessionWithEvent(s, 'resumed');
-        _maybeNotifyDailyLimitApproaching(s);
-      } else {
-        // إيقاف باقة الآن (نجمدها) - لا نلمس elapsedMinutes
-        s.isPaused = true;
-        s.pauseStart = now; // يمثل بداية الإيقاف (pause start)
-        await _saveSessionWithEvent(s, 'paused');
-
-        // نفحص المتبقي اليومي
-        final plan = s.subscription;
-        final spentToday = _minutesOverlapWithDate(s, DateTime.now());
-        final allowedToday =
-            (plan != null &&
-                    plan.dailyUsageType == 'limited' &&
-                    plan.dailyUsageHours != null)
-                ? plan.dailyUsageHours! * 60
-                : -1;
-
-        if (plan != null && allowedToday > 0 && spentToday <= allowedToday) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'تم الإيقاف — تبقى ضمن الباقة (${_formatMinutes(allowedToday - spentToday)})',
-                ),
-              ),
-            );
-          }
-        } else {
-          // لا باقة متبقية -> تحويل إلى حر (نطلب تأكيد)
-          await _confirmAndConvertToPayg(s, reason: 'exhausted_on_pause');
-          // بعد التحويل نححتسب ونحصّل إن لزم
-          await _chargePayAsYouGoOnStop(s);
-        }
-      }
-    } else {
-      // =========================
-      // حالة الجلسة حر (payg)
-      // =========================
-      if (!s.isActive) {
-        // بدء جلسة حر
-        s.isActive = true;
-        s.isPaused = false;
-        s.pauseStart = now; // يمثل آخر resume
-        await _saveSessionWithEvent(s, 'started_payg');
-      } else if (s.isPaused) {
-        // استئناف حر -> نعيّن آخر resume
-        s.isPaused = false;
-        s.pauseStart = now;
-        await _saveSessionWithEvent(s, 'resumed_payg');
-      } else {
-        // إيقاف حر -> نجمع الدقائق منذ آخر resume (أو منذ start)
-        final since = s.pauseStart ?? s.start;
-        final added = now.difference(since).inMinutes;
-        if (added > 0) {
-          s.elapsedMinutes += added;
-        }
-        s.isPaused = true;
-        s.pauseStart = now; // يمثل بداية الإيقاف
-        await _saveSessionWithEvent(
-          s,
-          'paused_payg',
-          meta: {'addedMinutes': added},
-        );
-        // عند إيقاف payg نحسب ونجمع
-        await _chargePayAsYouGoOnStop(s);
-      }
-    }
-
-    await SessionDb.updateSession(s);
-    if (mounted) setState(() {});
-  }
-
   Future<void> _chargePayAsYouGoOnStop(Session s) async {
     if (s.type != 'حر') return; // لا نحسب إذا لم تكن حالة حر
 
@@ -677,48 +567,77 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
   }
 
   Future<void> _restoreSavedSubscription(Session s) async {
-    // لو مفيش باقة محفوظة خلاص نرجع
     if (s.savedSubscriptionJson == null) return;
 
     try {
-      // ✅ 1) لو مخزن تاريخ انتهاء الباقة، نتأكد إن الاشتراك لسه صالح
-      if (s.savedSubscriptionEnd != null &&
-          DateTime.now().isAfter(s.savedSubscriptionEnd!)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('انتهت صلاحية الباقة ولا يمكن استئنافها'),
-          ),
-        );
-        return;
-      }
+      // 1) إغلاق أي جلسات Pay-as-you-go مرتبطة
+      final all = await SessionDb.getSessions();
+      final relatedPaygs =
+          all
+              .where((x) => x.originalSubscriptionId == s.id && x.type == 'حر')
+              .toList();
+      for (final p in relatedPaygs) {
+        // أولاً احسب المبلغ المستحق
+        final amount = await _chargePayAsYouGoOnStop(p);
+        // دالة لحساب المبلغ المستحق فقط
+        Future<double> getPaygAmount(Session s) async {
+          final minutes = getSessionMinutes(s) - s.paidMinutes;
+          if (minutes <= 0) return 0;
+          return _calculateTimeChargeFromMinutes(minutes);
+        }
 
-      // ✅ 2) استرجاع بيانات الباقة من الـ JSON
+        for (final p in relatedPaygs) {
+          final amount = await getPaygAmount(p); // ترجع double
+          if (amount > 0) {
+            final paid = await showDialog<bool>(
+              context: context,
+              builder:
+                  (_) => ReceiptDialog(
+                    session: p,
+                    fixedAmount: amount,
+                    description: 'دفع وقت حر قبل استعادة الباقة',
+                  ),
+            );
+            if (paid != true) {
+              p.addEvent('restore_failed_due_to_unpaid');
+              continue;
+            }
+          }
+        }
+
+        p.isActive = false;
+        p.isPaused = true;
+        p.addEvent('closed_on_restore_of_parent');
+        await SessionDb.updateSession(p);
+      }
+      // 2) استعادة الاشتراك الأصلي
       final map = jsonDecode(s.savedSubscriptionJson!);
       final restoredPlan = SubscriptionPlan.fromJson(
         Map<String, dynamic>.from(map),
       );
 
-      // ✅ 3) إعادة تفعيل الاشتراك
       s.subscription = restoredPlan;
+      s.type = "باقة";
+
+      if (s.savedSubscriptionEnd != null) s.end = s.savedSubscriptionEnd;
+      s.elapsedMinutes = s.savedElapsedMinutes ?? 0;
+
+      // ✅ مسح كل snapshot/flags القديمة
       s.savedSubscriptionJson = null;
-      // s.savedSubscriptionEnd = null; // ممكن تمسحه لو مش محتاجه بعد الاسترجاع
+      s.savedSubscriptionEnd = null;
+      s.savedElapsedMinutes = null;
+      s.savedDailySpent = null;
+      s.savedSubscriptionConvertedAt = null;
       s.resumeNextDayRequested = false;
       s.resumeDate = null;
-      s.type = "باقة"; // 🔹 مهم جدًا لتحديث الـ UI
-      // لو الجلسة متوقفة نعيد تشغيلها
-      if (!s.isActive) {
-        s.isActive = true;
-        s.isPaused = false;
-        s.pauseStart = DateTime.now();
-      }
 
-      // تسجيل حدث في سجل الجلسة
+      s.isActive = true;
+      s.isPaused = false;
+      s.runningSince = DateTime.now();
+
       s.addEvent('restored_subscription');
-
-      // ✅ 4) تحديث قاعدة البيانات
       await SessionDb.updateSession(s);
 
-      // ✅ 5) تحديث الواجهة
       if (mounted) {
         setState(() {});
         ScaffoldMessenger.of(context).showSnackBar(
@@ -726,12 +645,88 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
         );
       }
     } catch (e) {
-      // لو حصل أي خطأ في الاستعادة
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('حدث خطأ أثناء استعادة الباقة')),
+          const SnackBar(content: Text('حدث خطأ أثناء الاستعادة')),
         );
       }
+    }
+  }
+
+  Future<void> resumeSubscription(Session s) async {
+    if (s.savedSubscriptionJson != null) {
+      await _restoreSavedSubscription(s);
+      return;
+    }
+
+    // لو مفيش snapshot، نرجع للجلسة العادية
+    await resumeSession(s);
+  }
+
+  Future<void> convertSubscriptionToPayg_CreateNew(Session sub) async {
+    final now = DateTime.now();
+    final spentToday = _minutesOverlapWithDate(sub, now);
+    final totalMinutes = getSessionMinutes(sub);
+
+    sub.savedDailySpent = spentToday;
+    sub.savedElapsedMinutes = totalMinutes;
+
+    // حفظ snapshot لو مش محفوظ
+    if (sub.savedSubscriptionJson == null && sub.subscription != null) {
+      sub.savedSubscriptionJson = jsonEncode(sub.subscription!.toJson());
+      sub.savedSubscriptionEnd = _getSubscriptionEnd(sub);
+      sub.savedSubscriptionConvertedAt = now;
+      sub.addEvent('snapshot_saved_before_conversion');
+      await SessionDb.updateSession(sub);
+      debugPrint("💾 Snapshot saved for ${sub.name} at $now");
+    }
+
+    // أفضل: اجعل الجلسة الأصلية "مؤرشفة" (stop) - لا تمسحها
+    sub.isActive = false;
+    sub.isPaused = true;
+    // لو عايز تبيّن أنها محولة، ممكن تضيف event أو flag
+    sub.addEvent('subscription_archived_before_payg');
+    await SessionDb.updateSession(sub);
+
+    // أنشئ جلسة حر جديدة منفصلة (مرتبطة بالأصل)
+    final payg = Session(
+      id: generateId(),
+      name: '${sub.name} (حر)',
+      start: now,
+      end: null,
+      amountPaid: 0.0,
+      subscription: null,
+      isActive: true,
+      isPaused: false,
+      elapsedMinutes:
+          0, // لن نستخدم هذا للحساب — استخدم elapsedMinutesPayg أو runningSince
+      elapsedMinutesPayg: 0,
+      frozenMinutes: 0,
+      cart: [], // أو انسخ الكارت لو تريد
+      type: 'حر',
+      pauseStart: null,
+      paidMinutes: 0,
+      customerId: sub.customerId,
+      events: [
+        {
+          'ts': now.toIso8601String(),
+          'action': 'created_from_subscription',
+          'meta': {'from': sub.id},
+        },
+      ],
+      runningSince: now,
+      originalSubscriptionId: sub.id,
+    );
+
+    await SessionDb.insertSession(payg);
+
+    // حدث الواجهة: أعادة تحميل الجلسات
+    await _loadSessions();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تم إنشاء جلسة حر جديدة من الباقة')),
+      );
     }
   }
 
@@ -788,20 +783,6 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     );
   }
 
-  Future<void> _pickDate(BuildContext context) async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-    );
-    if (picked != null) {
-      setState(() {
-        _selectedDate = DateTime(picked.year, picked.month, picked.day);
-      });
-    }
-  }
-
   int getSubscriptionMinutes(Session s) {
     final now = DateTime.now();
 
@@ -817,49 +798,73 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
   }
 
   Future<void> _renewSubscription(Session s) async {
+    final plan =
+        s.subscription ??
+        (s.savedSubscriptionJson != null
+            ? SubscriptionPlan.fromJson(jsonDecode(s.savedSubscriptionJson!))
+            : null);
+
+    if (plan == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('لا توجد باقة للتجديد')));
+      return;
+    }
+
+    // نحسب المبلغ المطلوب للتجديد
+    double amount = plan.price ?? 0.0;
+
+    // عرض ReceiptDialog
+    final paid = await showDialog<bool>(
+      context: context,
+      builder:
+          (_) => ReceiptDialog(
+            session: s,
+            fixedAmount: amount,
+            description: 'تجديد باقة: ${plan.name}',
+          ),
+    );
+
+    if (paid != true) {
+      // المستخدم لم يدفع → لا نبدأ الباقة
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم إلغاء التجديد لعدم الدفع')),
+      );
+      return;
+    }
+
+    // ✅ بعد الدفع → بدء نفس الباقة
     s.type = "باقة";
-
-    // مسح أي بيانات باقة منتهية
-    s.savedSubscriptionJson = null;
-    s.savedSubscriptionEnd = null;
-    s.savedSubscriptionConvertedAt = null;
-
-    // إعادة ضبط الوقت
     s.start = DateTime.now();
     s.elapsedMinutes = 0;
     s.isPaused = false;
-
-    // نبدأ الجلسة الآن
     s.runningSince = DateTime.now();
     s.pauseStart = null;
 
-    // تحديد نهاية الاشتراك بناءً على الخطة (إذا موجودة)
-    final plan = s.subscription;
-    if (plan != null) {
-      if (plan.durationType == "hour") {
-        s.end = DateTime.now().add(Duration(hours: plan.durationValue ?? 1));
-      } else if (plan.durationType == "day") {
-        s.end = DateTime.now().add(Duration(days: plan.durationValue ?? 1));
-      } else if (plan.durationType == "month") {
-        s.end = DateTime(
-          DateTime.now().year,
-          DateTime.now().month + (plan.durationValue ?? 1),
-          DateTime.now().day,
-          DateTime.now().hour,
-          DateTime.now().minute,
-        );
-      } else {
-        s.end = DateTime.now().add(const Duration(hours: 1));
-      }
+    // تحديد نهاية الاشتراك بناءً على الخطة نفسها
+    if (plan.durationType == "hour") {
+      s.end = DateTime.now().add(Duration(hours: plan.durationValue ?? 1));
+    } else if (plan.durationType == "day") {
+      s.end = DateTime.now().add(Duration(days: plan.durationValue ?? 1));
+    } else if (plan.durationType == "month") {
+      s.end = DateTime(
+        DateTime.now().year,
+        DateTime.now().month + (plan.durationValue ?? 1),
+        DateTime.now().day,
+        DateTime.now().hour,
+        DateTime.now().minute,
+      );
     } else {
       s.end = DateTime.now().add(const Duration(hours: 1));
     }
 
-    // جلسة نشطة الآن
     s.isActive = true;
-
     await SessionDb.updateSession(s);
-    setState(() {}); // لتحديث الواجهة
+    setState(() {});
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تم تجديد الباقة وبدأت الجلسة')),
+    );
   }
 
   @override
@@ -984,37 +989,67 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                               itemCount: filteredSessions.length,
                               itemBuilder: (ctx, i) {
                                 final s = filteredSessions[i];
-                                final plan = s.subscription;
+
+                                final plan =
+                                    s.subscription ??
+                                    (s.savedSubscriptionJson != null
+                                        ? SubscriptionPlan.fromJson(
+                                          jsonDecode(s.savedSubscriptionJson!),
+                                        )
+                                        : null);
+
+                                // عدد الدقائق المسموح بها اليوم
+                                final allowedToday =
+                                    (plan != null &&
+                                            plan.dailyUsageType == 'limited' &&
+                                            plan.dailyUsageHours != null)
+                                        ? plan.dailyUsageHours! * 60
+                                        : -1; // -1 يعني لا حد يومي
+
+                                // عدد الدقائق المستهلكة اليوم
+
+                                // هل وصل الحد اليومي؟
+
+                                // يمكن تفعيل زر الإيقاف فقط لو الجلسة نشطة والحد اليومي لم ينتهِ
+
                                 final isSub = plan != null;
+
                                 final spentToday = _minutesOverlapWithDate(
                                   s,
                                   _selectedDate,
                                 );
+                                final isLimitReached =
+                                    isSub &&
+                                    allowedToday > 0 &&
+                                    spentToday >= allowedToday;
+
                                 final totalSoFar =
                                     s.type == "باقة"
                                         ? getSubscriptionMinutes(s)
                                         : getSessionMinutes(s);
+                                final canPause = s.isActive && !isLimitReached;
+                                // DEBUG
+                                /*debugPrint(
+  'DBG SESSION ${s.name} -> start=${s.start}, elapsedMinutesField=${s.elapsedMinutes}, '
+  'totalSoFar=$totalSoFar, pauseStart=${s.pauseStart}, isPaused=${s.isPaused}, '
+  'isActive=${s.isActive}, plan=$plan',
+);*/
 
-                                // -------- DEBUG: الصق هذا السطر هنا ----------
-                                /*      debugPrint(
-                                  'DBG SESSION ${s.name} -> start=${s.start}, elapsedMinutesField=${s.elapsedMinutes}, totalSoFar=$totalSoFar, pauseStart=${s.pauseStart}, isPaused=${s.isPaused}, isActive=${s.isActive}',
-                                );
-                              */ // --------------------------------------------
-                                final allowedToday =
-                                    (isSub &&
-                                            plan!.dailyUsageType == 'limited' &&
-                                            plan.dailyUsageHours != null)
-                                        ? plan.dailyUsageHours! * 60
-                                        : -1;
                                 final remaining =
                                     allowedToday > 0
                                         ? (allowedToday - spentToday)
                                         : -1;
+
                                 final minutesToCharge =
                                     ((totalSoFar - s.paidMinutes).clamp(
                                       0,
                                       totalSoFar > 0 ? totalSoFar : 0,
                                     )).toInt();
+                                final isSubActive =
+                                    s.type == "باقة" && s.isActive;
+                                final canPauseButton =
+                                    isSubActive &&
+                                    canPause; // canPause حسب منطقك
 
                                 // badge
                                 final badge =
@@ -1042,12 +1077,12 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                 }
 
                                 return Card(
-                                  color:
+                                  /* color:
                                       (isSub &&
                                               s.end != null &&
                                               s.end!.isBefore(DateTime.now()))
-                                          ? Colors.black
-                                          : null,
+                                          ? Colors.grey
+                                          : null,*/
                                   margin: const EdgeInsets.symmetric(
                                     horizontal: 10,
                                     vertical: 6,
@@ -1092,7 +1127,9 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                                   const SizedBox(height: 6),
                                                   if (allowedToday > 0)
                                                     Text(
-                                                      'متبقي اليوم: ${_formatMinutes(remaining)}',
+                                                      allowedToday > 0
+                                                          ? 'حد الاستخدام اليومي: ${_formatMinutes(allowedToday)}'
+                                                          : 'حد الاستخدام اليومي: غير محدود',
                                                     ),
                                                   Text(
                                                     'مضى كلي: ${getSessionMinutes(s)}    مدفوع: ${_formatMinutes(s.paidMinutes)}',
@@ -1133,208 +1170,116 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                                   // زر استئناف باقة (لو محفوظة + في يوم جديد)
                                                   if (s.savedSubscriptionJson !=
                                                       null) ...[
-                                                    if (DateTime.now().year !=
-                                                            s.start.year ||
-                                                        DateTime.now().month !=
-                                                            s.start.month ||
-                                                        DateTime.now().day !=
-                                                            s.start.day)
-                                                      Padding(
-                                                        padding:
-                                                            const EdgeInsets.only(
-                                                              right: 6.0,
+                                                    if (s.savedSubscriptionConvertedAt !=
+                                                        null)
+                                                      if (!_isSameDay(
+                                                        s.savedSubscriptionConvertedAt!,
+                                                        DateTime.now(),
+                                                      ))
+                                                        Padding(
+                                                          padding:
+                                                              const EdgeInsets.only(
+                                                                right: 6.0,
+                                                              ),
+                                                          child: ElevatedButton(
+                                                            onPressed:
+                                                                () =>
+                                                                    _restoreSavedSubscription(
+                                                                      s,
+                                                                    ),
+                                                            child: const Text(
+                                                              'استئناف باقتك',
                                                             ),
-                                                        child: ElevatedButton(
-                                                          onPressed:
-                                                              () =>
-                                                                  _restoreSavedSubscription(
-                                                                    s,
-                                                                  ),
-                                                          child: const Text(
-                                                            'استئناف باقتك',
                                                           ),
                                                         ),
-                                                      ),
                                                   ],
 
                                                   const SizedBox(width: 6),
 
                                                   // زر البدء/ايقاف الموحد يتصرف بحسب نوع الجلسة
                                                   ElevatedButton(
-                                                    onPressed: () async {
-                                                      final now =
-                                                          DateTime.now();
+                                                    onPressed:
+                                                        canPauseButton
+                                                            ? () async {
+                                                              final now =
+                                                                  DateTime.now();
 
-                                                      // ---------------- جلسة حر (payg) ----------------
-                                                      if (s.type == "حر") {
-                                                        if (!s.isPaused &&
-                                                            s.isActive) {
-                                                          // Pause (stop counting): احسب الوقت من runningSince (أو من start لو runningSince==null)
-                                                          final from =
-                                                              s.runningSince ??
-                                                              s.start;
-                                                          final added =
-                                                              now
-                                                                  .difference(
-                                                                    from,
-                                                                  )
-                                                                  .inMinutes;
-                                                          if (added > 0)
-                                                            s.elapsedMinutes =
-                                                                (s.elapsedMinutes) +
-                                                                added;
+                                                              if (!s.isPaused) {
+                                                                // Pause الباقة
+                                                                final from =
+                                                                    s.runningSince ??
+                                                                    s.start;
+                                                                final consumed =
+                                                                    now
+                                                                        .difference(
+                                                                          from,
+                                                                        )
+                                                                        .inMinutes;
+                                                                if (consumed >
+                                                                    0)
+                                                                  s.elapsedMinutes +=
+                                                                      consumed;
 
-                                                          // وضع علامة متوقفة
-                                                          s.isPaused = true;
-                                                          s.pauseStart =
-                                                              now; // وقت بداية الوقف
-                                                          s.runningSince =
-                                                              null; // مش شغالة الآن
+                                                                s.isPaused =
+                                                                    true;
+                                                                s.pauseStart =
+                                                                    now;
+                                                                s.runningSince =
+                                                                    null;
 
-                                                          await _saveSessionWithEvent(
-                                                            s,
-                                                            'paused_payg',
-                                                            meta: {
-                                                              'addedMinutes':
-                                                                  added,
-                                                            },
-                                                          );
-                                                          await _chargePayAsYouGoOnStop(
-                                                            s,
-                                                          );
-                                                        } else if (s.isPaused) {
-                                                          // Resume -> نعيد تشغيل العداد من الآن
-                                                          s.isPaused = false;
-                                                          s.runningSince =
-                                                              now; // آخر resume
-                                                          s.pauseStart = null;
-
-                                                          await _saveSessionWithEvent(
-                                                            s,
-                                                            'resumed_payg',
-                                                          );
-                                                        }
-
-                                                        // ---------------- جلسة باقة (subscription) ----------------
-                                                      } else if (s.type ==
-                                                          "باقة") {
-                                                        if (!s.isPaused &&
-                                                            s.isActive) {
-                                                          // Pause: سجّل وقت بداية الوقف، واحفظ الوقت المستهلك حتى الآن في elapsedMinutes
-                                                          final from =
-                                                              s.runningSince ??
-                                                              s.start;
-                                                          final consumedSoFar =
-                                                              now
-                                                                  .difference(
-                                                                    from,
-                                                                  )
-                                                                  .inMinutes;
-                                                          if (consumedSoFar > 0)
-                                                            s.elapsedMinutes =
-                                                                (s.elapsedMinutes) +
-                                                                consumedSoFar;
-
-                                                          s.isPaused = true;
-                                                          s.pauseStart = now;
-                                                          s.runningSince = null;
-
-                                                          await _saveSessionWithEvent(
-                                                            s,
-                                                            'paused',
-                                                            meta: {
-                                                              'consumedAdded':
-                                                                  consumedSoFar,
-                                                            },
-                                                          );
-                                                        } else if (s.isPaused) {
-                                                          // Resume: احسب مدة التجميد وامدّد نهاية الباقة، ثم ابدأ العداد من الآن
-                                                          int frozen = 0;
-                                                          if (s.pauseStart !=
-                                                              null) {
-                                                            frozen =
-                                                                now
-                                                                    .difference(
-                                                                      s.pauseStart!,
-                                                                    )
-                                                                    .inMinutes;
-                                                            if (frozen > 0) {
-                                                              if (s.end !=
-                                                                  null) {
-                                                                s.end = s.end!.add(
-                                                                  Duration(
-                                                                    minutes:
-                                                                        frozen,
-                                                                  ),
+                                                                await _saveSessionWithEvent(
+                                                                  s,
+                                                                  'paused',
+                                                                  meta: {
+                                                                    'consumedAdded':
+                                                                        consumed,
+                                                                  },
                                                                 );
-                                                              } else if (s
-                                                                      .savedSubscriptionEnd !=
-                                                                  null) {
-                                                                s.savedSubscriptionEnd = s
-                                                                    .savedSubscriptionEnd!
-                                                                    .add(
+                                                              } else {
+                                                                // Resume الباقة
+                                                                int frozen = 0;
+                                                                if (s.pauseStart !=
+                                                                    null) {
+                                                                  frozen =
+                                                                      now
+                                                                          .difference(
+                                                                            s.pauseStart!,
+                                                                          )
+                                                                          .inMinutes;
+                                                                  if (s.end !=
+                                                                      null)
+                                                                    s.end = s.end!.add(
                                                                       Duration(
                                                                         minutes:
                                                                             frozen,
                                                                       ),
                                                                     );
-                                                              } else {
-                                                                // إذا لا end ولا savedEnd: بنحسب end من الخطة ثم نمدده
-                                                                final calc =
-                                                                    _getSubscriptionEnd(
-                                                                      s,
-                                                                    );
-                                                                if (calc !=
-                                                                    null)
-                                                                  s.end = calc.add(
-                                                                    Duration(
-                                                                      minutes:
-                                                                          frozen,
-                                                                    ),
-                                                                  );
-                                                                else
-                                                                  s.end = now.add(
-                                                                    Duration(
-                                                                      minutes:
-                                                                          frozen,
-                                                                    ),
-                                                                  ); //fallback
+                                                                }
+
+                                                                s.isPaused =
+                                                                    false;
+                                                                s.pauseStart =
+                                                                    null;
+                                                                s.runningSince =
+                                                                    now;
+
+                                                                await _saveSessionWithEvent(
+                                                                  s,
+                                                                  'resumed',
+                                                                  meta: {
+                                                                    'frozenMinutesAdded':
+                                                                        frozen,
+                                                                  },
+                                                                );
                                                               }
+
+                                                              await SessionDb.updateSession(
+                                                                s,
+                                                              );
+                                                              if (mounted)
+                                                                setState(() {});
                                                             }
-                                                          }
-
-                                                          s.isPaused = false;
-                                                          s.pauseStart = null;
-                                                          s.runningSince =
-                                                              now; // نبدأ العد من الآن
-                                                          await _saveSessionWithEvent(
-                                                            s,
-                                                            'resumed',
-                                                            meta: {
-                                                              'frozenMinutesAdded':
-                                                                  frozen,
-                                                            },
-                                                          );
-                                                          _maybeNotifyDailyLimitApproaching(
-                                                            s,
-                                                          );
-                                                        }
-                                                      }
-
-                                                      // حفظ نهائي
-                                                      try {
-                                                        await SessionDb.updateSession(
-                                                          s,
-                                                        );
-                                                      } catch (e) {
-                                                        debugPrint(
-                                                          'Failed to update session on toggle: $e',
-                                                        );
-                                                      }
-                                                      if (mounted)
-                                                        setState(() {});
-                                                    },
-
+                                                            : null,
                                                     child: Text(
                                                       s.isPaused
                                                           ? 'استئناف'
@@ -1342,7 +1287,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                                     ),
                                                   ),
 
-                                                  const SizedBox(width: 6),
+                                                  /*     const SizedBox(width: 6),
 
                                                   ElevatedButton(
                                                     onPressed: () {
@@ -1364,9 +1309,11 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                                       }
                                                     },
 
-                                                    /* _showReceiptDialog(s),*/
+                                                    */
+                                                  /* _showReceiptDialog(s),*/
+                                                  /*
                                                     child: const Text("تفاصيل"),
-                                                  ),
+                                                  ),*/
                                                 ],
                                               ],
                                             ),
@@ -2115,3 +2062,101 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
       setState(() {});
     }
   }*/
+
+/*
+Future<void> _toggleSession(Session s) async {
+  final now = DateTime.now();
+
+  // =========================
+  // حالة وجود باقة (subscriber)
+  // =========================
+  if (s.subscription != null) {
+    if (!s.isActive) {
+      // بدء الجلسة (من متوقف)
+      s.isActive = true;
+      s.isPaused = false;
+      s.pauseStart = now; // يمثل آخر resume
+      await _saveSessionWithEvent(s, 'started');
+      _maybeNotifyDailyLimitApproaching(s);
+    } else if (s.isPaused) {
+      // استئناف الباقة -> نمدد نهاية الباقة بمدة التجميد
+      if (s.pauseStart != null && s.end != null) {
+        final frozen = now.difference(s.pauseStart!).inMinutes;
+        if (frozen > 0) {
+          s.end = s.end!.add(Duration(minutes: frozen));
+        }
+      }
+      s.isPaused = false;
+      s.pauseStart = now; // يمثل آخر resume
+      await _saveSessionWithEvent(s, 'resumed');
+      _maybeNotifyDailyLimitApproaching(s);
+    } else {
+      // إيقاف باقة الآن (نجمدها) - لا نلمس elapsedMinutes
+      s.isPaused = true;
+      s.pauseStart = now; // يمثل بداية الإيقاف (pause start)
+      await _saveSessionWithEvent(s, 'paused');
+
+      // نفحص المتبقي اليومي
+      final plan = s.subscription;
+      final spentToday = _minutesOverlapWithDate(s, DateTime.now());
+      final allowedToday =
+      (plan != null &&
+          plan.dailyUsageType == 'limited' &&
+          plan.dailyUsageHours != null)
+          ? plan.dailyUsageHours! * 60
+          : -1;
+
+      if (plan != null && allowedToday > 0 && spentToday <= allowedToday) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'تم الإيقاف — تبقى ضمن الباقة (${_formatMinutes(allowedToday - spentToday)})',
+              ),
+            ),
+          );
+        }
+      } else {
+        // لا باقة متبقية -> تحويل إلى حر (نطلب تأكيد)
+        await _confirmAndConvertToPayg(s, reason: 'exhausted_on_pause');
+        // بعد التحويل نححتسب ونحصّل إن لزم
+        await _chargePayAsYouGoOnStop(s);
+      }
+    }
+  } else {
+    // =========================
+    // حالة الجلسة حر (payg)
+    // =========================
+    if (!s.isActive) {
+      // بدء جلسة حر
+      s.isActive = true;
+      s.isPaused = false;
+      s.pauseStart = now; // يمثل آخر resume
+      await _saveSessionWithEvent(s, 'started_payg');
+    } else if (s.isPaused) {
+      // استئناف حر -> نعيّن آخر resume
+      s.isPaused = false;
+      s.pauseStart = now;
+      await _saveSessionWithEvent(s, 'resumed_payg');
+    } else {
+      // إيقاف حر -> نجمع الدقائق منذ آخر resume (أو منذ start)
+      final since = s.pauseStart ?? s.start;
+      final added = now.difference(since).inMinutes;
+      if (added > 0) {
+        s.elapsedMinutes += added;
+      }
+      s.isPaused = true;
+      s.pauseStart = now; // يمثل بداية الإيقاف
+      await _saveSessionWithEvent(
+        s,
+        'paused_payg',
+        meta: {'addedMinutes': added},
+      );
+      // عند إيقاف payg نحسب ونجمع
+      await _chargePayAsYouGoOnStop(s);
+    }
+  }
+
+  await SessionDb.updateSession(s);
+  if (mounted) setState(() {});
+}*/

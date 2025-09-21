@@ -144,6 +144,52 @@ class Product {
   );
 }
 
+///=========================Shif=============
+///
+class Shift {
+  final String id;
+  final String cashierName;
+  final DateTime openedAt;
+  final DateTime? closedAt;
+  final double openingBalance;
+  final double closingBalance;
+  final double totalSales;
+  final double totalExpenses;
+
+  Shift({
+    required this.id,
+    required this.cashierName,
+    required this.openedAt,
+    this.closedAt,
+    this.openingBalance = 0.0,
+    this.closingBalance = 0.0,
+    this.totalSales = 0.0,
+    this.totalExpenses = 0.0,
+  });
+
+  Map<String, dynamic> toMap() => {
+    "id": id,
+    "cashierName": cashierName,
+    "openedAt": openedAt.toIso8601String(),
+    "closedAt": closedAt?.toIso8601String(),
+    "openingBalance": openingBalance,
+    "closingBalance": closingBalance,
+    "totalSales": totalSales,
+    "totalExpenses": totalExpenses,
+  };
+
+  factory Shift.fromMap(Map<String, dynamic> map) => Shift(
+    id: map["id"],
+    cashierName: map["cashierName"],
+    openedAt: DateTime.parse(map["openedAt"]),
+    closedAt: map["closedAt"] != null ? DateTime.parse(map["closedAt"]) : null,
+    openingBalance: map["openingBalance"] ?? 0.0,
+    closingBalance: map["closingBalance"] ?? 0.0,
+    totalSales: map["totalSales"] ?? 0.0,
+    totalExpenses: map["totalExpenses"] ?? 0.0,
+  );
+}
+
 /// ---------------- Expense ----------------
 class Expense {
   final String id;
@@ -165,7 +211,7 @@ class Sale {
   double amount;
   double discount;
   DateTime date;
-
+  String? shiftId;
   // حقول إضافية للتوافق مع DB وأغراض التقارير
   String paymentMethod; // 'cash' | 'wallet' | 'balance' | ...
   String? customerId;
@@ -180,6 +226,7 @@ class Sale {
     this.paymentMethod = 'cash',
     this.customerId,
     this.customerName,
+    this.shiftId,
   }) : date = date ?? DateTime.now();
 
   Map<String, dynamic> toMap() {
@@ -192,6 +239,7 @@ class Sale {
       'paymentMethod': paymentMethod,
       'customerId': customerId,
       'customerName': customerName,
+      'shiftId': shiftId,
     };
   }
 
@@ -208,6 +256,7 @@ class Sale {
       paymentMethod: map['paymentMethod'] as String? ?? 'cash',
       customerId: map['customerId'] as String?,
       customerName: map['customerName'] as String?,
+      shiftId: map['shiftId'] as String?,
     );
   }
 }
@@ -259,6 +308,9 @@ class Discount {
 class Session {
   final String id;
   final String name;
+  int? savedDailySpent; // الدقايق المستهلكة اليوم
+  int? savedElapsedMinutes; // اجمالي الدقايق المستهلكة
+
   DateTime start;
   DateTime? end;
   double amountPaid;
@@ -276,16 +328,18 @@ class Session {
   DateTime? pauseStart;
   final String? customerId;
   DateTime? runningSince;
-
+  String? originalSubscriptionId;
   List<Map<String, dynamic>> events;
   String? savedSubscriptionJson;
   bool? resumeNextDayRequested;
   DateTime? resumeDate;
   DateTime? savedSubscriptionEnd;
   DateTime? savedSubscriptionConvertedAt;
+  DateTime? lastDailySpentCheckpoint;
 
   Session({
     required this.id,
+    this.originalSubscriptionId,
     required this.name,
     required this.start,
     this.end,
@@ -308,6 +362,9 @@ class Session {
     this.savedSubscriptionEnd,
     this.savedSubscriptionConvertedAt,
     this.runningSince,
+    this.savedDailySpent,
+    this.savedElapsedMinutes,
+    this.lastDailySpentCheckpoint,
   });
 
   Map<String, dynamic> toMap() {
@@ -335,6 +392,7 @@ class Session {
       'savedSubscriptionConvertedAt':
           savedSubscriptionConvertedAt?.millisecondsSinceEpoch,
       'runningSince': runningSince?.millisecondsSinceEpoch,
+      'originalSubscriptionId': originalSubscriptionId,
     };
   }
 
@@ -396,6 +454,9 @@ class Session {
           map['runningSince'] != null
               ? DateTime.fromMillisecondsSinceEpoch(map['runningSince'] as int)
               : null,
+      originalSubscriptionId: map['originalSubscriptionId'] as String?,
+      savedDailySpent: map['savedDailySpent'] as int?,
+      savedElapsedMinutes: map['savedElapsedMinutes'] as int?,
     );
   }
 
@@ -445,17 +506,30 @@ class Customer {
 class CustomerBalance {
   final String customerId;
   double balance;
+  DateTime updatedAt; // ✅ حقل جديد لتاريخ آخر تعديل
 
-  CustomerBalance({required this.customerId, required this.balance});
+  CustomerBalance({
+    required this.customerId,
+    required this.balance,
+    DateTime? updatedAt,
+  }) : updatedAt = updatedAt ?? DateTime.now();
 
   factory CustomerBalance.fromMap(Map<String, dynamic> map) {
     return CustomerBalance(
       customerId: map['customerId'] as String,
       balance: (map['balance'] as num).toDouble(),
+      updatedAt:
+          map['updatedAt'] != null
+              ? DateTime.parse(map['updatedAt'] as String)
+              : DateTime.now(),
     );
   }
 
   Map<String, dynamic> toMap() {
-    return {'customerId': customerId, 'balance': balance};
+    return {
+      'customerId': customerId,
+      'balance': balance,
+      'updatedAt': updatedAt.toIso8601String(),
+    };
   }
 }

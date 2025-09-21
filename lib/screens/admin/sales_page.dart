@@ -10,15 +10,40 @@ class SalesPage extends StatefulWidget {
 
 class _SalesPageState extends State<SalesPage> {
   final ds = AdminDataService.instance;
+  DateTime selectedDate = DateTime.now(); // اليوم الافتراضي
 
   @override
   void initState() {
     super.initState();
-    _loadSales();
+    _loadSalesForDate(selectedDate);
   }
 
-  Future<void> _loadSales() async {
-    ds.sales = await FinanceDb.getSales(); // تحميل من DB
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (picked != null && picked != selectedDate) {
+      setState(() {
+        selectedDate = picked;
+        _loadSalesForDate(selectedDate);
+      });
+    }
+  }
+
+  Future<void> _loadSalesForDate(DateTime date) async {
+    final allSales = await FinanceDb.getSales();
+    ds.sales =
+        allSales
+            .where(
+              (s) =>
+                  s.date.year == date.year &&
+                  s.date.month == date.month &&
+                  s.date.day == date.day,
+            )
+            .toList();
     setState(() {});
   }
 
@@ -33,9 +58,22 @@ class _SalesPageState extends State<SalesPage> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            Text(
-              'إجمالي المبيعات: ${ds.totalSales.toStringAsFixed(2)}',
-              style: const TextStyle(fontSize: 16),
+            // اختيار التاريخ
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _pickDate,
+                  icon: const Icon(Icons.calendar_today),
+                  label: Text(
+                    "${selectedDate.day}/${selectedDate.month}/${selectedDate.year}",
+                  ),
+                ),
+                Text(
+                  'إجمالي المبيعات: ${ds.totalSales.toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 16),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             Expanded(
@@ -51,9 +89,7 @@ class _SalesPageState extends State<SalesPage> {
                             child: ListTile(
                               title: Text(s.description),
                               subtitle: Text(
-                                "${s.date.toLocal()}"
-                                    .split(".")
-                                    .first, // تنسيق التاريخ
+                                "${s.date.toLocal()}".split(".").first,
                               ),
                               trailing: Text(s.amount.toStringAsFixed(2)),
                             ),

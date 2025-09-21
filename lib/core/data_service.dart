@@ -138,6 +138,72 @@ class AdminDataService {
 
   // ===== رصيد درج الكاشير (مخزن بالذاكرة للعرض السريع) =====
   double drawerBalance = 0.0;
+  // إجمالي اليوم
+  double getTodaySales() {
+    final now = DateTime.now();
+    return sales
+        .where(
+          (s) =>
+              s.date.year == now.year &&
+              s.date.month == now.month &&
+              s.date.day == now.day,
+        )
+        .fold(0.0, (p, e) => p + e.amount);
+  }
+
+  double getSalesByDate(DateTime date) {
+    return sales
+        .where(
+          (s) =>
+              s.date.year == date.year &&
+              s.date.month == date.month &&
+              s.date.day == date.day,
+        )
+        .fold(0.0, (sum, s) => sum + s.amount);
+  }
+
+  double getAllSales() {
+    return sales.fold(0.0, (sum, s) => sum + s.amount);
+  }
+
+  double getExpensesByDate(DateTime date) {
+    return expenses
+        .where(
+          (e) =>
+              e.date.year == date.year &&
+              e.date.month == date.month &&
+              e.date.day == date.day,
+        )
+        .fold(0.0, (sum, e) => sum + e.amount);
+  }
+
+  double getAllExpenses() {
+    return expenses.fold(0.0, (sum, e) => sum + e.amount);
+  }
+
+  double getProfitByDate(DateTime date) {
+    return getSalesByDate(date) - getExpensesByDate(date);
+  }
+
+  double getAllProfit() {
+    return getAllSales() - getAllExpenses();
+  }
+
+  double getTodayExpenses() {
+    final now = DateTime.now();
+    return expenses
+        .where(
+          (e) =>
+              e.date.year == now.year &&
+              e.date.month == now.month &&
+              e.date.day == now.day,
+        )
+        .fold(0.0, (p, e) => p + e.amount);
+  }
+
+  double getTodayProfit() {
+    return getTodaySales() - getTodayExpenses();
+  }
 
   // ------------------- Init -------------------
   Future<void> init() async {
@@ -212,14 +278,13 @@ class AdminDataService {
   /// - updateDrawer: لو true و paymentMethod == 'cash' سيُضاف المبلغ إلى درج الكاشير
   /// - drawerDelta: لو عايز تضيف مقدار مختلف للمخزن بدل s.amount
   Future<void> addSale(
-      Sale s, {
-        String? paymentMethod,
-        Customer? customer,
-        double? discount,
-        bool updateDrawer = false,
-        double? drawerDelta,
-      }) async {
-
+    Sale s, {
+    String? paymentMethod,
+    Customer? customer,
+    double? discount,
+    bool updateDrawer = false,
+    double? drawerDelta,
+  }) async {
     await FinanceDb.insertSale(
       s,
       paymentMethod: paymentMethod,
@@ -241,13 +306,15 @@ class AdminDataService {
     }
   }
 
-
   // ------------------- أرصدة العملاء (مساعدين) -------------------
   Future<double> getCustomerBalance(String customerName) async {
     return await FinanceDb.getCustomerBalance(customerName);
   }
 
-  Future<void> setCustomerBalance(String customerName, double newBalance) async {
+  Future<void> setCustomerBalance(
+    String customerName,
+    double newBalance,
+  ) async {
     await FinanceDb.setCustomerBalance(customerName, newBalance);
   }
 

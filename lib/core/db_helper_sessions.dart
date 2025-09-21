@@ -101,6 +101,35 @@ class SessionDb {
     await db.delete('sessions', where: 'id = ?', whereArgs: [id]);
   }
 
+  static Future<Session?> getSessionById(String id) async {
+    final db = await DbHelper.instance.database;
+    final maps = await db.query(
+      'sessions',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+
+    if (maps.isEmpty) return null;
+
+    final map = maps.first;
+
+    // حاول تجيب الخطة لو موجودة
+    SubscriptionPlan? plan;
+    final subId = map['subscriptionId'];
+    if (subId != null && subId.toString().isNotEmpty) {
+      try {
+        plan = AdminDataService.instance.subscriptions.firstWhere(
+          (s) => s.id == subId,
+        );
+      } catch (_) {
+        plan = null;
+      }
+    }
+
+    return Session.fromMap(map, plan: plan);
+  }
+
   static Future<List<Session>> getSessions() async {
     final db = await DbHelper.instance.database;
     final maps = await db.query('sessions', orderBy: 'start DESC');
@@ -112,7 +141,7 @@ class SessionDb {
       if (subId != null && subId.toString().isNotEmpty) {
         try {
           plan = AdminDataService.instance.subscriptions.firstWhere(
-                (s) => s.id == subId,
+            (s) => s.id == subId,
           );
         } catch (_) {
           plan = null; // لو الخطة مش لاقيها
@@ -122,5 +151,4 @@ class SessionDb {
       return Session.fromMap(maps[i], plan: plan);
     });
   }
-
 }

@@ -184,6 +184,7 @@ class FinanceDb {
       'paymentMethod': paymentMethod,
       'customerId': customerId,
       'customerName': customerName,
+      'shiftId': s.shiftId,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -317,8 +318,83 @@ class FinanceDb {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  static Future<List<Map<String, dynamic>>> getShiftsByDate(
+    DateTime date,
+  ) async {
+    final db = await openDatabase('finance.db');
+
+    final start = DateTime(date.year, date.month, date.day);
+    final end = start.add(const Duration(days: 1));
+
+    final shifts = await db.query(
+      'shifts',
+      where: 'openedAt >= ? AND openedAt < ?',
+      whereArgs: [start.toIso8601String(), end.toIso8601String()],
+    );
+
+    List<Map<String, dynamic>> result = [];
+
+    for (var shift in shifts) {
+      // هنا نحسب المبيعات والمصروفات من جدول المبيعات والمصروفات
+      final shiftId = shift['id'];
+
+      final totalSalesResult = await db.rawQuery(
+        'SELECT SUM(amount) as total FROM sales WHERE shiftId = ?',
+        [shiftId],
+      );
+      final totalExpensesResult = await db.rawQuery(
+        'SELECT SUM(amount) as total FROM expenses WHERE shiftId = ?',
+        [shiftId],
+      );
+
+      final totalSales = totalSalesResult.first['total'] ?? 0.0;
+      final totalExpenses = totalExpensesResult.first['total'] ?? 0.0;
+
+      result.add({
+        'cashierName': shift['cashierName'],
+        'openedAt': shift['openedAt'],
+        'closedAt': shift['closedAt'],
+        'openingBalance': shift['openingBalance'],
+        'closingBalance': shift['closingBalance'],
+        'totalSales': totalSales,
+        'totalExpenses': totalExpenses,
+      });
+    }
+
+    return result;
+  }
+
   static Future<List<Map<String, dynamic>>> getShifts() async {
     final db = await DbHelper.instance.database;
-    return await db.query('shifts', orderBy: 'closed_at DESC');
+    final rows = await db.query('shifts');
+
+    List<Map<String, dynamic>> updatedRows = [];
+
+    for (var row in rows) {
+      final shiftId = row['id'] as String;
+
+      final salesResult = await db.rawQuery(
+        "SELECT SUM(amount) as total FROM sales WHERE shiftId = ?",
+        [shiftId],
+      );
+
+      final expensesResult = await db.rawQuery(
+        "SELECT SUM(amount) as total FROM expenses WHERE shiftId = ?",
+        [shiftId],
+      );
+
+      final totalSales =
+          (salesResult.first['total'] as num?)?.toDouble() ?? 0.0;
+      final totalExpenses =
+          (expensesResult.first['total'] as num?)?.toDouble() ?? 0.0;
+
+      updatedRows.add({
+        ...row,
+        'totalSales': totalSales,
+        'totalExpenses': totalExpenses,
+      });
+    }
+
+    return updatedRows;
   }
 }

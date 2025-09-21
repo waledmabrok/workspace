@@ -1,4 +1,3 @@
-/*
 import 'package:flutter/material.dart';
 import '../../core/db_helper_cart.dart';
 import '../../core/db_helper_sessions.dart';
@@ -15,6 +14,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
   DateTime _selectedDate = DateTime.now();
   List<Session> _sessions = [];
   bool _loading = true;
+  bool _showOnlyWithSubs = true;
 
   @override
   void initState() {
@@ -25,24 +25,21 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
   Future<void> _loadSessions() async {
     setState(() => _loading = true);
     final data = await SessionDb.getSessions();
-    // لو حابب تحمّل الكارت لكل جلسة:
     for (var s in data) {
       try {
         s.cart = await CartDb.getCartBySession(s.id);
       } catch (_) {}
     }
     setState(() {
-      _sessions = data.where((s) => s.subscription != null).toList();
+      _sessions = data;
       _loading = false;
     });
   }
 
   // ===== مساعدات زمنية =====
   int _minutesOverlapWithDate(Session s, DateTime date) {
-    // يحسب دقائق الجلسة التي تقع داخل اليوم المحدد (00:00 .. 23:59:59)
     final dayStart = DateTime(date.year, date.month, date.day);
     final dayEnd = dayStart.add(const Duration(days: 1));
-
     final sessStart = s.start.isBefore(dayStart) ? dayStart : s.start;
     final sessEndCandidate = s.end ?? DateTime.now();
     final sessEnd =
@@ -92,21 +89,40 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
 
   @override
   Widget build(BuildContext context) {
-    final list =
+    final filteredSessions =
         _sessions.where((s) {
-            // عرض كل الجلسات اللي مرتبطة باقتك — لو حابب فلتر على active فقط استعمل s.isActive
-            return true;
+            final start = s.start;
+            final end = s.end ?? DateTime.now();
+            final dayStart = DateTime(
+              _selectedDate.year,
+              _selectedDate.month,
+              _selectedDate.day,
+            );
+            final dayEnd = dayStart.add(const Duration(days: 1));
+            final overlaps = start.isBefore(dayEnd) && end.isAfter(dayStart);
+
+            if (_showOnlyWithSubs) return overlaps && s.subscription != null;
+            return overlaps;
           }).toList()
           ..sort((a, b) => a.name.compareTo(b.name));
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('المشتركون - باقات'),
+        forceMaterialTransparency: true,
+        title: const Text('المشتركين - باقات'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _loadSessions,
             tooltip: 'تحديث',
+            onPressed: _loadSessions,
+          ),
+          IconButton(
+            icon: Icon(
+              _showOnlyWithSubs ? Icons.filter_alt : Icons.filter_alt_off,
+            ),
+            tooltip: _showOnlyWithSubs ? "عرض الكل" : "عرض المشتركين فقط",
+            onPressed:
+                () => setState(() => _showOnlyWithSubs = !_showOnlyWithSubs),
           ),
         ],
       ),
@@ -115,16 +131,18 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
               ? const Center(child: CircularProgressIndicator())
               : Column(
                 children: [
+                  // ===== فلترة بالتاريخ =====
                   Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
+                    padding: const EdgeInsets.all(12.0),
                     child: Row(
                       children: [
-                        const Text("عرض ليوم: "),
+                        const Text("عرض ليوم:"),
                         const SizedBox(width: 8),
                         ElevatedButton.icon(
+                          icon: const Icon(Icons.calendar_today),
+                          label: Text(
+                            "${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}",
+                          ),
                           onPressed: () async {
                             final picked = await showDatePicker(
                               context: context,
@@ -132,14 +150,9 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                               firstDate: DateTime(2000),
                               lastDate: DateTime(2100),
                             );
-                            if (picked != null) {
+                            if (picked != null)
                               setState(() => _selectedDate = picked);
-                            }
                           },
-                          icon: const Icon(Icons.calendar_today),
-                          label: Text(
-                            "${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}",
-                          ),
                         ),
                         const SizedBox(width: 12),
                         ElevatedButton(
@@ -154,25 +167,30 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                   ),
                   Expanded(
                     child:
-                        list.isEmpty
-                            ? const Center(child: Text('لا يوجد مشتركين باقات'))
+                        filteredSessions.isEmpty
+                            ? const Center(child: Text('لا يوجد سجلات'))
                             : ListView.builder(
-                              itemCount: list.length,
+                              itemCount: filteredSessions.length,
                               itemBuilder: (ctx, i) {
-                                final s = list[i];
-                                final plan = s.subscription!;
-                                final spentOnSelectedDay =
-                                    _minutesOverlapWithDate(s, _selectedDate);
+                                final s = filteredSessions[i];
+                                final plan = s.subscription;
+                                final spentToday = _minutesOverlapWithDate(
+                                  s,
+                                  _selectedDate,
+                                );
                                 final totalSoFar = _totalMinutesSoFar(s);
                                 final allowedToday =
-                                    (plan.dailyUsageType == 'limited' &&
+                                    (plan != null &&
+                                            plan.dailyUsageType == 'limited' &&
                                             plan.dailyUsageHours != null)
                                         ? plan.dailyUsageHours! * 60
                                         : -1;
                                 final remainingToday =
                                     (allowedToday > 0)
-                                        ? (allowedToday - spentOnSelectedDay)
-                                            .clamp(0, allowedToday)
+                                        ? (allowedToday - spentToday).clamp(
+                                          0,
+                                          allowedToday,
+                                        )
                                         : -1;
                                 final overallEnd = _getSubscriptionEnd(s);
 
@@ -181,42 +199,75 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                                     horizontal: 10,
                                     vertical: 6,
                                   ),
-                                  child: ListTile(
-                                    isThreeLine: true,
-                                    title: Text(
-                                      s.name,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  elevation: 3,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      gradient: const LinearGradient(
+                                        colors: [
+                                          Color(0xFF1A2233),
+                                          Color(0xFF0B0F1A),
+                                        ], // نفس الداكن + تدريج خفيف
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
                                       ),
+                                      borderRadius: BorderRadius.circular(12),
                                     ),
-                                    subtitle: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          "باقة: ${plan.name} • نوع: ${plan.durationValue ?? ''} ${plan.durationType}",
+                                    child: ListTile(
+                                      isThreeLine: true,
+                                      title: Text(
+                                        s.name,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.white,
                                         ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          "مضى اليوم: ${_formatMinutes(spentOnSelectedDay)} • المتبقي اليوم: ${remainingToday >= 0 ? _formatMinutes(remainingToday) : 'غير محدود'}",
+                                      ),
+                                      subtitle: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          if (plan != null)
+                                            Text(
+                                              "باقة: ${plan.name} • نوع: ${plan.durationType}",
+                                              style: const TextStyle(
+                                                color: Colors.white70,
+                                              ),
+                                            ),
+                                          if (plan == null)
+                                            const Text(
+                                              "❌ بدون اشتراك",
+                                              style: TextStyle(
+                                                color: Colors.redAccent,
+                                              ),
+                                            ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            "اليوم: ${_formatMinutes(spentToday)} • المتبقي اليوم: ${remainingToday >= 0 ? _formatMinutes(remainingToday) : 'غير محدد'}",
+                                            style: const TextStyle(
+                                              color: Colors.white70,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            "مضى كلي: ${_formatMinutes(totalSoFar)} • تنتهي: ${overallEnd != null ? overallEnd.toLocal().toString().split('.').first : 'غير محدد'}",
+                                            style: const TextStyle(
+                                              color: Colors.white70,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      trailing: ElevatedButton(
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor:
+                                              Colors
+                                                  .green[600], // زر التفاصيل أخضر
+                                          minimumSize: const Size(60, 36),
                                         ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          "مضى كلي: ${_formatMinutes(totalSoFar)} • تنتهي: ${overallEnd != null ? overallEnd.toLocal().toString().split('.').first : 'غير محددة'}",
-                                        ),
-                                      ],
-                                    ),
-                                    trailing: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        ElevatedButton(
-                                          onPressed: () {
-                                            // تفتح صفحة تفاصيل الجلسة أو تعرض حوار
-                                            _showSessionDetails(s);
-                                          },
-                                          child: const Text('تفاصيل'),
-                                        ),
-                                      ],
+                                        onPressed: () => _showSessionDetails(s),
+                                        child: const Text('تفاصيل'),
+                                      ),
                                     ),
                                   ),
                                 );
@@ -229,9 +280,11 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
   }
 
   void _showSessionDetails(Session s) {
-    final plan = s.subscription!;
+    final plan = s.subscription;
     final allowedToday =
-        (plan.dailyUsageType == 'limited' && plan.dailyUsageHours != null)
+        (plan != null &&
+                plan.dailyUsageType == 'limited' &&
+                plan.dailyUsageHours != null)
             ? plan.dailyUsageHours! * 60
             : -1;
     final spentToday = _minutesOverlapWithDate(s, DateTime.now());
@@ -247,8 +300,10 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('باقة: ${plan.name}'),
-                  Text('السعر: ${plan.price}'),
+                  if (plan != null) Text('باقة: ${plan.name}'),
+                  if (plan == null) const Text("❌ بدون اشتراك"),
+                  Text('بدأ: ${s.start.toLocal()}'),
+                  Text('انتهى: ${s.end?.toLocal() ?? 'مازال مستمر'}'),
                   const SizedBox(height: 8),
                   Text('مضى اليوم: ${_formatMinutes(spentToday)}'),
                   Text(
@@ -264,191 +319,6 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                   ),
                 ],
               ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إغلاق'),
-              ),
-            ],
-          ),
-    );
-  }
-}
-*/
-import 'package:flutter/material.dart';
-import '../../core/db_helper_cart.dart';
-import '../../core/db_helper_sessions.dart';
-import '../../core/models.dart';
-
-class AdminSubscribersPage extends StatefulWidget {
-  const AdminSubscribersPage({super.key});
-
-  @override
-  State<AdminSubscribersPage> createState() => _AdminSubscribersPageState();
-}
-
-class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
-  DateTime _selectedDate = DateTime.now();
-  List<Session> _sessions = [];
-  bool _loading = true;
-  bool _showOnlyWithSubs = true; // ✅ متغير جديد
-
-  @override
-  void initState() {
-    super.initState();
-    _loadSessions();
-  }
-
-  Future<void> _loadSessions() async {
-    setState(() => _loading = true);
-    final data = await SessionDb.getSessions();
-    for (var s in data) {
-      try {
-        s.cart = await CartDb.getCartBySession(s.id);
-      } catch (_) {}
-    }
-    setState(() {
-      _sessions = data;
-      _loading = false;
-    });
-  }
-
-  // ===== نفس الدوال المساعدة بتاعتك هنا =====
-
-  @override
-  Widget build(BuildContext context) {
-    final list =
-        _showOnlyWithSubs
-              ? _sessions.where((s) => s.subscription != null).toList()
-              : _sessions.toList()
-          ..sort((a, b) => a.name.compareTo(b.name));
-
-    return Scaffold(
-      appBar: AppBar(
-        forceMaterialTransparency: true,
-        title: const Text('المشتركون - باقات'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadSessions,
-            tooltip: 'تحديث',
-          ),
-          IconButton(
-            icon: Icon(
-              _showOnlyWithSubs ? Icons.filter_alt : Icons.filter_alt_off,
-            ),
-            tooltip: _showOnlyWithSubs ? "عرض الكل" : "عرض المشتركين فقط",
-            onPressed: () {
-              setState(() {
-                _showOnlyWithSubs = !_showOnlyWithSubs;
-              });
-            },
-          ),
-        ],
-      ),
-      body:
-          _loading
-              ? const Center(child: CircularProgressIndicator())
-              : list.isEmpty
-              ? const Center(child: Text('لا يوجد سجلات'))
-              : ListView.builder(
-                itemCount: list.length,
-                itemBuilder: (ctx, i) {
-                  final s = list[i];
-                  final plan = s.subscription;
-
-                  return Card(
-                    margin: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    child: ListTile(
-                      title: Text(
-                        s.name,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (plan != null)
-                            Text(
-                              "باقة: ${plan.name} • نوع: ${plan.durationType}",
-                            ),
-                          if (plan == null) const Text("❌ بدون اشتراك"),
-                          Text("بدأ: ${s.start.toLocal()}"),
-                          Text("انتهى: ${s.end?.toLocal() ?? 'مازال مستمر'}"),
-                        ],
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.info, color: Colors.blue),
-                            onPressed: () => _showSessionDetails(s),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () async {
-                              final confirm = await showDialog<bool>(
-                                context: context,
-                                builder:
-                                    (_) => AlertDialog(
-                                      title: const Text("تأكيد الحذف"),
-                                      content: Text(
-                                        "هل أنت متأكد من حذف ${s.name}؟",
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          onPressed:
-                                              () =>
-                                                  Navigator.pop(context, false),
-                                          child: const Text("إلغاء"),
-                                        ),
-                                        ElevatedButton(
-                                          onPressed:
-                                              () =>
-                                                  Navigator.pop(context, true),
-                                          child: const Text("حذف"),
-                                        ),
-                                      ],
-                                    ),
-                              );
-
-                              if (confirm == true) {
-                                await SessionDb.deleteSession(
-                                  s.id,
-                                ); // ✅ حذف من DB
-                                _loadSessions(); // ✅ إعادة تحميل البيانات بعد الحذف
-                              }
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-    );
-  }
-
-  void _showSessionDetails(Session s) {
-    final plan = s.subscription;
-
-    showDialog(
-      context: context,
-      builder:
-          (_) => AlertDialog(
-            title: Text('تفاصيل ${s.name}'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (plan != null) Text('باقة: ${plan.name}'),
-                if (plan == null) const Text("❌ بدون اشتراك"),
-                Text('بدأ: ${s.start.toLocal()}'),
-                Text('انتهى: ${s.end?.toLocal() ?? 'مازال مستمر'}'),
-              ],
             ),
             actions: [
               TextButton(

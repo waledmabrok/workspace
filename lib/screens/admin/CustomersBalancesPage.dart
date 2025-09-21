@@ -13,6 +13,7 @@ class _CustomersBalancesPageState extends State<CustomersBalancesPage>
   List<Customer> customers = [];
   List<CustomerBalance> balances = [];
   late TabController _tabController;
+  DateTime _selectedDate = DateTime.now();
 
   @override
   void initState() {
@@ -36,8 +37,28 @@ class _CustomersBalancesPageState extends State<CustomersBalancesPage>
     super.dispose();
   }
 
+  // فلترة العملاء حسب التاريخ
+  List<Customer> _filterByDate(List<Customer> list) {
+    return list.where((c) {
+      final balanceEntry = balances.firstWhere(
+        (b) => b.customerId == c.id,
+        orElse:
+            () => CustomerBalance(
+              customerId: c.id,
+              balance: 0.0,
+              updatedAt: DateTime.now(),
+            ),
+      );
+      final lastUpdate = balanceEntry.updatedAt ?? DateTime.now();
+      return lastUpdate.year == _selectedDate.year &&
+          lastUpdate.month == _selectedDate.month &&
+          lastUpdate.day == _selectedDate.day;
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
+    // تصنيف العملاء إيجابيين/سلبيين
     final positiveCustomers =
         customers.where((c) {
           final balance =
@@ -70,55 +91,85 @@ class _CustomersBalancesPageState extends State<CustomersBalancesPage>
         title: const Text('رصيد العملاء'),
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [Tab(text: 'باقي ليه'), Tab(text: '  عليه ليك')],
+          tabs: const [Tab(text: 'باقي ليه'), Tab(text: 'عليه ليك')],
         ),
+        actions: [
+          // زر اختيار التاريخ
+          IconButton(
+            icon: const Icon(Icons.calendar_today),
+            onPressed: () async {
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: _selectedDate,
+                firstDate: DateTime(2000),
+                lastDate: DateTime(2100),
+              );
+              if (picked != null) setState(() => _selectedDate = picked);
+            },
+            tooltip: "اختيار التاريخ",
+          ),
+          IconButton(
+            icon: const Icon(Icons.today),
+            onPressed: () => setState(() => _selectedDate = DateTime.now()),
+            tooltip: "اليوم",
+          ),
+        ],
       ),
       body: TabBarView(
         controller: _tabController,
         children: [
-          _buildList(positiveCustomers),
-          _buildList(negativeCustomers),
+          _buildList(_filterByDate(positiveCustomers)),
+          _buildList(_filterByDate(negativeCustomers)),
         ],
       ),
     );
   }
 
   Widget _buildList(List<Customer> list) {
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: list.length,
-      itemBuilder: (context, i) {
-        final c = list[i];
-        final balance =
-            balances
-                .firstWhere(
-                  (b) => b.customerId == c.id,
-                  orElse: () => CustomerBalance(customerId: c.id, balance: 0.0),
-                )
-                .balance;
+    return list.isEmpty
+        ? const Center(
+          child: Text('لا يوجد سجلات', style: TextStyle(color: Colors.white70)),
+        )
+        : ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: list.length,
+          itemBuilder: (context, i) {
+            final c = list[i];
+            final balance =
+                balances
+                    .firstWhere(
+                      (b) => b.customerId == c.id,
+                      orElse:
+                          () => CustomerBalance(customerId: c.id, balance: 0.0),
+                    )
+                    .balance;
 
-        return Card(
-          color: const Color(0xFF071022),
-          child: ListTile(
-            title: Text(c.name, style: const TextStyle(color: Colors.white)),
-            subtitle: Text(
-              'تليفون: ${c.phone ?? "-"}\nالرصيد: ${balance.toStringAsFixed(2)} ج',
-              style: const TextStyle(color: Colors.white70),
-            ),
-            trailing: Text(
-              balance > 0
-                  ? "له ${balance.toStringAsFixed(2)} ج"
-                  : "عليه ${balance.abs().toStringAsFixed(2)} ج",
-              style: TextStyle(
-                color: balance > 0 ? Colors.green : Colors.red,
-                fontWeight: FontWeight.bold,
+            return Card(
+              color: const Color(0xFF071022),
+              child: ListTile(
+                title: Text(
+                  c.name,
+                  style: const TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  'تليفون: ${c.phone ?? "-"}\nالرصيد: ${balance.toStringAsFixed(2)} ج',
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                trailing: Text(
+                  balance > 0
+                      ? "له ${balance.toStringAsFixed(2)} ج"
+                      : "عليه ${balance.abs().toStringAsFixed(2)} ج",
+                  style: TextStyle(
+                    color:
+                        balance > 0 ? Colors.greenAccent : Colors.purpleAccent,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                onTap: () => _adjustBalance(c, balance),
               ),
-            ),
-            onTap: () => _adjustBalance(c, balance),
-          ),
+            );
+          },
         );
-      },
-    );
   }
 
   Future<void> _adjustBalance(Customer customer, double balance) async {
@@ -127,13 +178,22 @@ class _CustomersBalancesPageState extends State<CustomersBalancesPage>
       context: context,
       builder:
           (_) => AlertDialog(
-            title: Text("تعديل رصيد ${customer.name}"),
+            backgroundColor: const Color(0xFF1A2233),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: Text(
+              "تعديل رصيد ${customer.name}",
+              style: const TextStyle(color: Colors.white),
+            ),
             content: TextField(
               controller: controller,
               decoration: const InputDecoration(
                 labelText: "المبلغ (+ له | - عليه)",
+                labelStyle: TextStyle(color: Colors.white70),
               ),
               keyboardType: TextInputType.number,
+              style: const TextStyle(color: Colors.white),
             ),
             actions: [
               TextButton(
@@ -141,6 +201,9 @@ class _CustomersBalancesPageState extends State<CustomersBalancesPage>
                 child: const Text("الغاء"),
               ),
               ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF5387FF),
+                ),
                 onPressed: () {
                   final val = double.tryParse(controller.text) ?? 0.0;
                   Navigator.pop(context, val);
@@ -154,7 +217,11 @@ class _CustomersBalancesPageState extends State<CustomersBalancesPage>
     if (res != null && res != 0.0) {
       final newBalance = balance + res;
       await CustomerBalanceDb.upsert(
-        CustomerBalance(customerId: customer.id, balance: newBalance),
+        CustomerBalance(
+          customerId: customer.id,
+          balance: newBalance,
+          updatedAt: DateTime.now(),
+        ),
       );
       _loadCustomers();
     }
