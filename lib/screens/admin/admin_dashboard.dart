@@ -8,6 +8,7 @@ import 'dart:math';
 import '../../core/db_helper_Subscribe.dart';
 import '../../core/data_service.dart';
 import '../../core/models.dart';
+import '../../utils/colors.dart';
 import 'CustomerSubscribe.dart';
 import 'MAin_dashboard.dart';
 import 'discounts_page.dart';
@@ -71,6 +72,31 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Widget build(BuildContext context) {
     final cards = [
       _AdminCardData(
+        'غرف',
+        Icons.laptop,
+        () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => RoomsPage()),
+        ),
+      ),
+
+      _AdminCardData(
+        'الوقت العادي',
+        Icons.hourglass_bottom,
+        () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => PricingSettingsPage()),
+        ),
+      ),
+      _AdminCardData(
+        'إدارة الاشتراكات',
+        Icons.payment,
+        () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => SubscriptionsPage()),
+        ),
+      ),
+      _AdminCardData(
         'اداره المنتجات',
         Icons.inventory,
         () => Navigator.push(
@@ -86,14 +112,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           MaterialPageRoute(builder: (_) => DashboardPagee()),
         ),
       ),
-      _AdminCardData(
-        'غرف',
-        Icons.laptop,
-        () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => RoomsPage()),
-        ),
-      ),
+
       _AdminCardData(
         'نسبه الارباح',
         Icons.show_chart,
@@ -130,30 +149,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
         ),
       ),*/
-      _AdminCardData(
-        'الوقت العادي',
-        Icons.hourglass_bottom,
-        () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => PricingSettingsPage()),
-        ),
-      ),
-      _AdminCardData(
-        'إدارة الاشتراكات',
-        Icons.payment,
-        () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => SubscriptionsPage()),
-        ),
-      ),
-      _AdminCardData(
+
+      /*  _AdminCardData(
         'الخصومات',
         Icons.discount,
         () => Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => DiscountsPage()),
         ),
-      ),
+      ),*/
       _AdminCardData("أرصدة العملاء", Icons.account_balance, () {
         Navigator.push(
           context,
@@ -256,8 +260,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
         child: GridView.builder(
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2, // شبكه 2 عمود
-            mainAxisSpacing: 18,
-            crossAxisSpacing: 18,
+            mainAxisSpacing: 25,
+            crossAxisSpacing: 25,
             childAspectRatio: 2.6,
           ),
           itemCount: cards.length,
@@ -286,24 +290,34 @@ class AdminCard extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF2A69FF), width: 2),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Colors.transparent, Colors.white.withOpacity(0.02)],
-          ),
+          border: Border.all(
+            color: AppColorsDark.mainColor,
+            width: 2,
+          ), // اللون الأزرق كما في الصورة
+          color: Colors.transparent, // خلفية داكنة مشابهة للصورة
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
-        child: Row(
+        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Icon(data.icon, size: 36, color: const Color(0xFF2A69FF)),
-            const SizedBox(width: 18),
+            Icon(
+              data.icon,
+              size: 55,
+              color: AppColorsDark.mainColor.withOpacity(
+                0.4,
+              ), // نفس اللون للأيقونة
+            ),
+            const SizedBox(height: 16), // مسافة بين الأيقونة والنص
             Text(
               data.title,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w500),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 35,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-            const Spacer(),
-            const Icon(Icons.keyboard_arrow_left, size: 30),
           ],
         ),
       ),

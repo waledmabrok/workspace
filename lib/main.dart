@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:workspace/utils/colors.dart';
 import 'core/data_service.dart';
 import 'screens/home_router.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -50,6 +51,26 @@ class WorkspaceCashierApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFF0B0F1A),
         textTheme: ThemeData.dark().textTheme.apply(fontFamily: 'Roboto'),
 
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            foregroundColor: Colors.white,
+            disabledBackgroundColor: Colors.transparent,
+            backgroundColor: AppColorsDark.bgColor,
+
+            overlayColor: Colors.blueAccent.withOpacity(0.0),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(15),
+              side: BorderSide(color: AppColorsDark.mainColor, width: 1.5),
+            ),
+
+            textStyle: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 17,
+              // fontWeight: FontWeight.w500,
+              color: Colors.white,
+            ),
+          ),
+        ),
         // تخصيص الـ Dialog
         dialogTheme: DialogTheme(
           backgroundColor: const Color(0xFF1A2233), // لون خلفية الدايلوج
@@ -77,8 +98,13 @@ class WorkspaceCashierApp extends StatelessWidget {
             ),
           ),
         ),
+        textSelectionTheme: const TextSelectionThemeData(
+          cursorColor: Colors.blueAccent, // لون المؤشر
+          selectionColor: Colors.blueAccent, // لون تحديد النص
+          selectionHandleColor: Colors.blueAccent, // لون الهاندلز بتاعة التحديد
+        ),
         // تخصيص أزرار ElevatedButton (زي زرار الدخول)
-        elevatedButtonTheme: ElevatedButtonThemeData(
+        /*  elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFF5387FF),
             foregroundColor: Colors.white,
@@ -91,7 +117,7 @@ class WorkspaceCashierApp extends StatelessWidget {
               borderRadius: BorderRadius.circular(14),
             ),
           ),
-        ),
+        ),*/
       ),
 
       home: const Directionality(

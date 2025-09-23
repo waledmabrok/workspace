@@ -1,24 +1,34 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:workspace/utils/colors.dart';
+import '../../core/FinanceDb.dart';
 import '../../core/data_service.dart';
 import '../../core/db_helper_cart.dart';
+import '../../core/db_helper_customer_balance.dart';
+import '../../core/db_helper_customers.dart';
 import '../../core/db_helper_sessions.dart';
 import '../../core/models.dart';
 import 'dart:convert';
-
+import 'package:intl/intl.dart';
+import '../../core/product_db.dart';
+import '../../widget/buttom.dart';
 import '../../widget/dialog.dart';
+import '../../widget/dialogSup.dart';
 import 'notification.dart';
 
 class AdminSubscribersPagee extends StatefulWidget {
   const AdminSubscribersPagee({super.key});
 
   @override
-  State<AdminSubscribersPagee> createState() => _AdminSubscribersPageState();
+  AdminSubscribersPageeState createState() => AdminSubscribersPageeState();
 }
 
-class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
+class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
+  @override
+  bool get wantKeepAlive => true; // حافظ على الحالة
   DateTime _selectedDate = DateTime.now();
-  List<Session> _sessions = [];
+  List<Session> _sessionsSub = [];
   bool _loading = true;
   Timer? _uiTimer;
   Timer? _checkTimer;
@@ -26,101 +36,145 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
+  Map<String, String>? formatEndDateParts(DateTime? date) {
+    if (date == null) return null;
+
+    final localDate = date.toLocal();
+
+    // التاريخ فقط
+    final datePart = DateFormat('yyyy/MM/dd', 'ar').format(localDate);
+
+    // الوقت فقط بصيغة 12 ساعة مع AM/PM
+    final timePart = DateFormat('hh:mm a', 'ar').format(localDate);
+
+    return {'date': datePart, 'time': timePart};
+  }
+
   @override
   void initState() {
     super.initState();
     _updateActiveSubscriptionsForNewDay();
     // مؤقّت واحد فقط مع فحص mounted
-    _expiringTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+    /*_expiringTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       if (!mounted) return;
-      checkExpiringSessions(context, _sessions);
+      checkExpiringSessionsSub(context, _sessionsSub);
     });
-
-    _loadSessions().then((_) => _applyDailyLimitForAllSessions());
-
-    _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+*/
+    _loadSessionsSub().then((_) => _applyDailyLimitForAllSessionsSub());
+    reloadData();
+    /*  _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
-
-    _checkTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+*/
+    /*   _checkTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!mounted) return;
-      if (!_loading) _applyDailyLimitForAllSessions();
-    });
+      if (!_loading) _applyDailyLimitForAllSessionsSub();
+    });*/
   }
 
   @override
   void dispose() {
-    _expiringTimer?.cancel();
+    //  _expiringTimer?.cancel();
     _uiTimer?.cancel();
     _checkTimer?.cancel();
     super.dispose();
   }
 
+  ///load from cashier=====================================
+  Future<void> reloadData() async {
+    await _loadSessionsSub(); // تحديث مباشر
+    if (mounted) setState(() {});
+
+    /* _expiringTimer?.cancel();
+    _expiringTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
+      if (!mounted || _loading) return;
+      await _applyDailyLimitForAllSessionsSub();
+    });*/
+  }
+
+  List<Session> _filtered = [];
+  List<Session> _all = [];
+  String _searchQuery = "";
+
+  void applySearch(String query) {
+    setState(() {
+      _searchQuery = query;
+    });
+  }
+
+  List<Session> _filteredSessionsSup = [];
+
+  ///=============================================================
   Future<void> _ensureSnapshot(Session s) async {
     if (s.subscription != null && s.savedSubscriptionJson == null) {
       s.savedSubscriptionJson = jsonEncode(s.subscription!.toJson());
-      s.savedSubscriptionEnd = _getSubscriptionEnd(s);
+      s.savedSubscriptionEnd = _getSubscriptionEndSub(s);
       s.savedElapsedMinutes = s.elapsedMinutes;
-      s.savedDailySpent = _minutesOverlapWithDate(s, DateTime.now());
+      s.savedDailySpent = _minutesOverlapWithDateSub(s, DateTime.now());
       s.savedSubscriptionConvertedAt = DateTime.now();
       await SessionDb.updateSession(s);
       debugPrint("💾 Snapshot auto-saved for ${s.name}");
     }
   }
 
-  Future<void> checkExpiringSessions(
+  Future<void> checkExpiringSessionsSub(
     BuildContext context,
     List<Session> allSessions,
   ) async {
     final now = DateTime.now();
-    final expiring = <Session>[];
-    final expired = <Session>[];
 
     for (var s in allSessions) {
       if (s.subscription == null) continue;
-      if (s.end == null) continue;
 
-      final remaining = s.end!.difference(now);
+      // حد يومي
+      final plan = s.subscription!;
+      if (plan.dailyUsageType == 'limited' && plan.dailyUsageHours != null) {
+        final spentToday = _minutesOverlapWithDateSub(s, now);
+        final allowedToday = plan.dailyUsageHours! * 60;
 
-      if (remaining.inMinutes <= 0) {
-        expired.add(s);
-      } else if (remaining.inMinutes <= 50) {
-        expiring.add(s);
+        if (spentToday >= allowedToday && s.dailyLimitNotified != true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                "⚠️ ${s.name} وصل حد الباقة اليومي — سيكمل على سعر الحر",
+              ),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 4),
+            ),
+          );
+          s.dailyLimitNotified = true;
+          await SessionDb.updateSession(s);
+        }
       }
-    }
 
-    if (expiring.isNotEmpty || expired.isNotEmpty) {
-      List<String> notifications = [];
-
-      if (expiring.isNotEmpty) {
-        notifications.add("⚠️ فيه ${expiring.length} اشتراك قرب يخلص");
+      // الاشتراك نفسه قرب ينتهي
+      if (s.end != null && now.isBefore(s.end!)) {
+        final remaining = s.end!.difference(now);
+        if (remaining.inMinutes <= 50 && s.expiringNotified != true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text("⚠️ ${s.name} اشتراكه قرب يخلص"),
+              backgroundColor: Colors.yellow,
+              duration: Duration(seconds: 4),
+            ),
+          );
+          s.expiringNotified = true;
+          await SessionDb.updateSession(s);
+        }
       }
 
-      if (expired.isNotEmpty) {
-        notifications.add("⛔ فيه ${expired.length} اشتراك انتهى خلاص");
-      }
-      // إشعار بسيط داخل الأب
-      if (expiring.isNotEmpty) {
+      // الاشتراك انتهى
+      if (s.end != null && now.isAfter(s.end!) && s.expiredNotified != true) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("⚠️ فيه ${expiring.length} اشتراك قرب يخلص"),
-            backgroundColor: Colors.orange,
-            duration: Duration(seconds: 4),
-          ),
-        );
-      }
-
-      if (expired.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("⛔ فيه ${expired.length} اشتراك انتهى خلاص"),
+            content: Text("⛔ ${s.name} اشتراكه انتهى"),
             backgroundColor: Colors.red,
             duration: Duration(seconds: 4),
           ),
         );
+        s.expiredNotified = true;
+        await SessionDb.updateSession(s);
       }
-
-      // 🔔 أو تقدر تستخدم flutter_local_notifications عشان يظهر إشعار ع النظام
     }
   }
 
@@ -129,7 +183,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
   Future<void> _updateActiveSubscriptionsForNewDay() async {
     final now = DateTime.now();
 
-    for (final s in _sessions) {
+    for (final s in _sessionsSub) {
       if (s.type == "باقة" && s.isActive) {
         // لو لم يتم حفظ نسخة لليوم الجديد بعد
         if (s.savedSubscriptionJson == null ||
@@ -152,13 +206,13 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
   }
 
   double? _getSubscriptionProgress(Session s) {
-    final end = _getSubscriptionEnd(s);
+    final end = _getSubscriptionEndSub(s);
     if (end == null) return null;
 
     final total = end.difference(s.start).inMinutes;
     if (total <= 0) return null;
 
-    final elapsed = getSessionMinutes(s); // هنا بيتحسب الوقف المؤقت صح
+    final elapsed = getSessionMinutesSub(s); // هنا بيتحسب الوقف المؤقت صح
     final progress = elapsed / total;
     return progress.clamp(0.0, 1.0);
   }
@@ -173,7 +227,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _confirmAndConvertToPayg(
+  Future<void> _confirmAndConvertToPaygSub(
     Session s, {
     String reason = 'manual',
   }) async {
@@ -203,7 +257,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     // حفظ نسخة الاشتراك القديم لو مش محفوظة
     if (s.savedSubscriptionJson == null && s.subscription != null) {
       s.savedSubscriptionJson = jsonEncode(s.subscription!.toJson());
-      s.savedSubscriptionEnd = _getSubscriptionEnd(s);
+      s.savedSubscriptionEnd = _getSubscriptionEndSub(s);
       await SessionDb.updateSession(s);
       debugPrint("💾 Snapshot saved before converting ${s.name} to payg");
     }
@@ -233,14 +287,14 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     }
   }
 
-  void _maybeNotifyDailyLimitApproaching(Session s) {
+  void _maybeNotifyDailyLimitApproachingSub(Session s) {
     final plan = s.subscription;
     if (plan == null ||
         plan.dailyUsageType != 'limited' ||
         plan.dailyUsageHours == null)
       return;
 
-    final spentToday = _minutesOverlapWithDate(s, DateTime.now());
+    final spentToday = _minutesOverlapWithDateSub(s, DateTime.now());
     final allowedToday = plan.dailyUsageHours! * 60;
     final remaining = allowedToday - spentToday;
 
@@ -256,9 +310,9 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
       }
 
       Timer(Duration(minutes: remaining), () async {
-        final idx = _sessions.indexWhere((x) => x.id == s.id);
+        final idx = _sessionsSub.indexWhere((x) => x.id == s.id);
         if (idx == -1) return;
-        final stillSession = _sessions[idx];
+        final stillSession = _sessionsSub[idx];
         if (!mounted) return;
 
         final planNow = stillSession.subscription;
@@ -267,7 +321,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
             planNow.dailyUsageHours == null)
           return;
 
-        final newSpentToday = _minutesOverlapWithDate(
+        final newSpentToday = _minutesOverlapWithDateSub(
           stillSession,
           DateTime.now(),
         );
@@ -303,27 +357,36 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     }
   }
 
-  Future<void> _loadSessions() async {
+  Future<void> _loadSessionsSub() async {
     setState(() => _loading = true);
     final data = await SessionDb.getSessions();
+
+    setState(() {
+      _all = data;
+      _filtered = List.from(_all);
+    });
     for (var s in data) {
       try {
         s.cart = await CartDb.getCartBySession(s.id);
       } catch (_) {}
     }
     setState(() {
-      _sessions = data;
+      _sessionsSub = data;
       _loading = false;
     });
   }
 
-  Future<void> _applyDailyLimitForAllSessions() async {
+  Future<void> _applyDailyLimitForAllSessionsSub() async {
     final now = DateTime.now();
     debugPrint("⏳ [_applyDailyLimitForAllSessions] Checking at $now ...");
 
     final toConvert = <Session>[];
 
-    for (var s in _sessions) {
+    for (var s in _sessionsSub) {
+      debugPrint(
+        "Checking ${s.name}: originalId=${s.originalSubscriptionId}, savedJson=${s.savedSubscriptionJson}",
+      );
+
       if (!s.isActive) continue;
       if (s.type == 'حر') continue;
       if (s.subscription == null) continue;
@@ -337,7 +400,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
       if (plan.dailyUsageType != 'limited' || plan.dailyUsageHours == null)
         continue;
 
-      final spentToday = _getMinutesConsumedToday(s, now);
+      final spentToday = _getMinutesConsumedTodaySub(s, now);
       final allowedToday = plan.dailyUsageHours! * 60;
 
       debugPrint(
@@ -345,19 +408,22 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
       );
 
       if (spentToday >= allowedToday) {
-        toConvert.add(s);
+        // فقط إذا لم يتم تحويلها مسبقًا
+        if (s.originalSubscriptionId == null &&
+            s.savedSubscriptionJson == null &&
+            s.type != 'حر') {
+          await convertSubscriptionToPayg_CreateNew(s);
+        }
       }
     }
 
-    // تحويل الجلسات التي وصلت الحد اليومي
-    for (final s in toConvert) {
-      await convertSubscriptionToPayg_CreateNew(s);
+    await _loadSessionsSub();
+    if (mounted) {
+      setState(() {}); // تحديث الواجهة فورًا
     }
-
-    await _loadSessions();
   }
 
-  int _minutesOverlapWithDate(Session s, DateTime date) {
+  int _minutesOverlapWithDateSub(Session s, DateTime date) {
     // إذا الجلسة دلوقتي حر فنرجع 0 — لا نحسب وقت بعد التحويل كباقي باقة
     if (s.type == 'حر') return 0;
 
@@ -371,7 +437,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
       final upto = t.isBefore(now) ? t : now;
       // نعطي نسخة مؤقتة من الsession لنستخدم دوالنا بصورة صحيحة
       // أسهل طريقه: نحتسب استهلاك حتى upto بنفس منطق getSessionMinutes لكن محددًا بـ upto
-      final effectiveEnd = _getSubscriptionEnd(s) ?? upto;
+      final effectiveEnd = _getSubscriptionEndSub(s) ?? upto;
       final end = effectiveEnd.isBefore(upto) ? effectiveEnd : upto;
       final totalSinceStart = end.difference(s.start).inMinutes;
       int frozen = s.frozenMinutes;
@@ -393,7 +459,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     return overlap < 0 ? 0 : overlap;
   }
 
-  int _getMinutesConsumedToday(Session s, DateTime now) {
+  int _getMinutesConsumedTodaySub(Session s, DateTime now) {
     if (s.type == 'حر') return 0;
 
     final dayStart = DateTime(now.year, now.month, now.day);
@@ -417,7 +483,20 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     return spentMinutes;
   }
 
-  int getSessionMinutes(Session s) {
+  String getSessionFormattedTimeSub(Session s) {
+    final minutes = getSessionMinutesSub(s);
+    if (minutes < 60) {
+      return "$minutes دقيقة"; // أقل من ساعة
+    }
+    final hours = minutes ~/ 60;
+    final mins = minutes % 60;
+    if (mins == 0) {
+      return "$hours ساعة"; // ساعات بس
+    }
+    return "$hours ساعة و $mins دقيقة";
+  }
+
+  int getSessionMinutesSub(Session s) {
     final now = DateTime.now();
     if (s.type == 'حر') {
       int base = s.elapsedMinutesPayg;
@@ -434,7 +513,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     }
   }
 
-  Future<void> pauseSession(Session s) async {
+  Future<void> pauseSessionSub(Session s) async {
     final now = DateTime.now();
     if (!s.isPaused) {
       final since = s.runningSince ?? s.start;
@@ -452,7 +531,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     }
   }
 
-  Future<void> resumeSession(Session s) async {
+  Future<void> resumeSessionSub(Session s) async {
     if (s.isPaused) {
       s.isPaused = false;
       s.runningSince = DateTime.now();
@@ -460,7 +539,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     }
   }
 
-  DateTime? _getSubscriptionEnd(Session s) {
+  DateTime? _getSubscriptionEndSub(Session s) {
     final plan = s.subscription;
     if (plan == null || plan.isUnlimited)
       return s.end; // لو محفوظ end، أظهرها، وإلا null
@@ -515,7 +594,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     return end;
   }
 
-  String _formatMinutes(int minutes) {
+  String _formatMinutesSub(int minutes) {
     if (minutes <= 0) return "0د";
     final h = minutes ~/ 60;
     final m = minutes % 60;
@@ -523,7 +602,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     return "${m}د";
   }
 
-  double _calculateTimeChargeFromMinutes(int minutes) {
+  double _calculateTimeChargeFromMinutesSub(int minutes) {
     final settings = AdminDataService.instance.pricingSettings;
     if (minutes <= settings.firstFreeMinutes) return 0;
     if (minutes <= 60) return settings.firstHourFee;
@@ -534,15 +613,15 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     return amount;
   }
 
-  Future<void> _chargePayAsYouGoOnStop(Session s) async {
+  /* Future<void> _chargePayAsYouGoOnStopSub(Session s) async {
     if (s.type != 'حر') return; // لا نحسب إذا لم تكن حالة حر
 
-    final totalMinutes = getSessionMinutes(s);
+    final totalMinutes = getSessionMinutesSub(s);
     final diff = totalMinutes - s.paidMinutes;
     final minutesToCharge = diff > 0 ? diff.toInt() : 0;
     if (minutesToCharge <= 0) return;
 
-    final amount = _calculateTimeChargeFromMinutes(minutesToCharge);
+    final amount = _calculateTimeChargeFromMinutesSub(minutesToCharge);
     final sale = Sale(
       id: generateId(),
       description: 'دفع وقت - جلسة ${s.name}',
@@ -560,10 +639,37 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'دُفعت ${amount.toStringAsFixed(2)} ج لوقت ${_formatMinutes(minutesToCharge)}',
+            'دُفعت ${amount.toStringAsFixed(2)} ج لوقت ${_formatMinutesSub(minutesToCharge)}',
           ),
         ),
       );
+  }*/
+  Future<double> _chargePayAsYouGoOnStopSub(Session s) async {
+    if (s.type != 'حر') return 0; // لا نحسب إذا لم تكن حالة حر
+
+    final totalMinutes = getSessionMinutesSub(s);
+    final diff = totalMinutes - s.paidMinutes;
+    final minutesToCharge = diff > 0 ? diff.toInt() : 0;
+    if (minutesToCharge <= 0) return 0;
+
+    final amount = _calculateTimeChargeFromMinutesSub(minutesToCharge);
+
+    final sale = Sale(
+      id: generateId(),
+      description: 'دفع وقت - جلسة ${s.name}',
+      amount: amount,
+    );
+    await AdminDataService.instance.addSale(
+      sale,
+      paymentMethod: 'cash',
+      updateDrawer: true,
+    );
+
+    s.paidMinutes += minutesToCharge;
+    s.addEvent('charged', meta: {'minutes': minutesToCharge, 'amount': amount});
+    await SessionDb.updateSession(s);
+
+    return amount;
   }
 
   Future<void> _restoreSavedSubscription(Session s) async {
@@ -576,14 +682,14 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
           all
               .where((x) => x.originalSubscriptionId == s.id && x.type == 'حر')
               .toList();
-      for (final p in relatedPaygs) {
+      /*for (final p in relatedPaygs) {
         // أولاً احسب المبلغ المستحق
-        final amount = await _chargePayAsYouGoOnStop(p);
+        final amount = await _chargePayAsYouGoOnStopSub(p);
         // دالة لحساب المبلغ المستحق فقط
         Future<double> getPaygAmount(Session s) async {
-          final minutes = getSessionMinutes(s) - s.paidMinutes;
+          final minutes = getSessionMinutesSub(s) - s.paidMinutes;
           if (minutes <= 0) return 0;
-          return _calculateTimeChargeFromMinutes(minutes);
+          return _calculateTimeChargeFromMinutesSub(minutes);
         }
 
         for (final p in relatedPaygs) {
@@ -609,7 +715,40 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
         p.isPaused = true;
         p.addEvent('closed_on_restore_of_parent');
         await SessionDb.updateSession(p);
+      }*/
+      for (final p in relatedPaygs) {
+        final amount = await _chargePayAsYouGoOnStopSub(p); // الحساب
+        if (amount > 0) {
+          final paid = await showDialog<bool>(
+            context: context,
+            builder:
+                (_) => ReceiptDialog(
+                  session: p,
+                  fixedAmount: amount,
+                  description: 'دفع وقت حر قبل استعادة الباقة',
+                ),
+          );
+          if (paid != true) {
+            p.addEvent('restore_failed_due_to_unpaid');
+            await SessionDb.updateSession(p);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('لم يتم الدفع، الباقة لم تُستأنف'),
+                ),
+              );
+            }
+            return; // توقف الاستعادة لو ما دفعش
+          }
+        }
+
+        // ⚠️ حتى لو amount = 0، لازم نقفل الجلسة الحر
+        p.isActive = false;
+        p.isPaused = true;
+        p.addEvent('closed_on_restore_of_parent');
+        await SessionDb.updateSession(p);
       }
+
       // 2) استعادة الاشتراك الأصلي
       final map = jsonDecode(s.savedSubscriptionJson!);
       final restoredPlan = SubscriptionPlan.fromJson(
@@ -660,13 +799,19 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     }
 
     // لو مفيش snapshot، نرجع للجلسة العادية
-    await resumeSession(s);
+    await resumeSessionSub(s);
   }
 
   Future<void> convertSubscriptionToPayg_CreateNew(Session sub) async {
     final now = DateTime.now();
-    final spentToday = _minutesOverlapWithDate(sub, now);
-    final totalMinutes = getSessionMinutes(sub);
+    // 🛑 تحقق إذا كانت الجلسة تم تحويلها مسبقًا
+    if (sub.originalSubscriptionId != null ||
+        sub.savedSubscriptionJson != null) {
+      debugPrint("🚫 Session ${sub.name} already converted to PAYG");
+      return;
+    }
+    final spentToday = _minutesOverlapWithDateSub(sub, now);
+    final totalMinutes = getSessionMinutesSub(sub);
 
     sub.savedDailySpent = spentToday;
     sub.savedElapsedMinutes = totalMinutes;
@@ -674,7 +819,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     // حفظ snapshot لو مش محفوظ
     if (sub.savedSubscriptionJson == null && sub.subscription != null) {
       sub.savedSubscriptionJson = jsonEncode(sub.subscription!.toJson());
-      sub.savedSubscriptionEnd = _getSubscriptionEnd(sub);
+      sub.savedSubscriptionEnd = _getSubscriptionEndSub(sub);
       sub.savedSubscriptionConvertedAt = now;
       sub.addEvent('snapshot_saved_before_conversion');
       await SessionDb.updateSession(sub);
@@ -721,11 +866,13 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     await SessionDb.insertSession(payg);
 
     // حدث الواجهة: أعادة تحميل الجلسات
-    await _loadSessions();
+    await _loadSessionsSub();
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تم إنشاء جلسة حر جديدة من الباقة')),
+        SnackBar(
+          content: Text('تم إنشاء جلسة حر جديدة من الباقة: ${sub.name}'),
+        ),
       );
     }
   }
@@ -880,7 +1027,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
     */
     ////===========================
     final filteredSessions =
-        _sessions.where((s) {
+        _sessionsSub.where((s) {
           final wasSubscriber =
               s.subscription != null || s.savedSubscriptionJson != null;
 
@@ -895,8 +1042,14 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
 
           final overlaps = s.start.isBefore(dayEnd) && s.end!.isAfter(dayStart);
 
-          return wasSubscriber && overlaps;
+          // فلترة بالبحث
+          final matchesSearch = s.name.toLowerCase().contains(
+            _searchQuery.toLowerCase(),
+          );
+
+          return wasSubscriber && overlaps && matchesSearch;
         }).toList();
+
     ////==================================================================
 
     /*  final filteredSessions =
@@ -927,7 +1080,8 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
 
 */
     // الآن نعرض كل الجلسات (حتى اللي تحولت لحر)، لكن نميّزهم بصرياً.
-    final list = _sessions.toList()..sort((a, b) => a.name.compareTo(b.name));
+    final list =
+        _sessionsSub.toList()..sort((a, b) => a.name.compareTo(b.name));
 
     return Scaffold(
       body:
@@ -939,12 +1093,33 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                     padding: const EdgeInsets.all(12),
                     child: Row(
                       children: [
-                        const Text("عرض ليوم: "),
+                        const Text(
+                          "عرض ليوم: ",
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                         const SizedBox(width: 8),
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.calendar_today),
-                          label: Text(
+                        ElevatedButton(
+                          child: Text(
                             "${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}",
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white.withOpacity(
+                              0,
+                            ), // خلفية شفافة
+                            foregroundColor: Colors.white, // لون النص والأيقونة
+                            shadowColor: Colors.transparent, // إزالة الظل
+                            side: BorderSide(
+                              color: AppColorsDark.mainColor,
+                              width: 1.5,
+                            ), // البوردر
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                8,
+                              ), // تقويس الحواف
+                            ),
                           ),
                           onPressed: () async {
                             final picked = await showDatePicker(
@@ -967,16 +1142,27 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
 
                         const SizedBox(width: 12),
                         ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white.withOpacity(
+                              0,
+                            ), // خلفية شفافة
+                            foregroundColor: Colors.white, // لون النص والأيقونة
+                            shadowColor: Colors.transparent, // إزالة الظل
+                            side: BorderSide(
+                              color: AppColorsDark.mainColor,
+                              width: 1.5,
+                            ), // البوردر
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                8,
+                              ), // تقويس الحواف
+                            ),
+                          ),
                           onPressed:
                               () => setState(
                                 () => _selectedDate = DateTime.now(),
                               ),
                           child: const Text("اليوم"),
-                        ),
-                        Spacer(),
-                        IconButton(
-                          icon: const Icon(Icons.refresh),
-                          onPressed: _loadSessions,
                         ),
                       ],
                     ),
@@ -1013,8 +1199,10 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                 // يمكن تفعيل زر الإيقاف فقط لو الجلسة نشطة والحد اليومي لم ينتهِ
 
                                 final isSub = plan != null;
-
-                                final spentToday = _minutesOverlapWithDate(
+                                final endParts = formatEndDateParts(
+                                  _getSubscriptionEndSub(s),
+                                );
+                                final spentToday = _minutesOverlapWithDateSub(
                                   s,
                                   _selectedDate,
                                 );
@@ -1026,7 +1214,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                 final totalSoFar =
                                     s.type == "باقة"
                                         ? getSubscriptionMinutes(s)
-                                        : getSessionMinutes(s);
+                                        : getSessionMinutesSub(s);
                                 final canPause = s.isActive && !isLimitReached;
                                 // DEBUG
                                 /*debugPrint(
@@ -1054,10 +1242,42 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                 // badge
                                 final badge =
                                     isSub
-                                        ? Chip(
-                                          label: Text('باقة'),
-                                          backgroundColor:
-                                              Colors.green.shade300,
+                                        ? InkWell(
+                                          onTap: () {
+                                            print('تم الضغط على الباقة');
+                                          },
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          child: Container(
+                                            width: 85, // يملأ كل العرض المتاح
+                                            height: 37,
+
+                                            decoration: BoxDecoration(
+                                              color: Colors.green.withOpacity(
+                                                0.1,
+                                              ), // لون الخلفية
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                    8,
+                                                  ), // تقوس الحواف
+                                              border: Border.all(
+                                                color:
+                                                    Colors.green, // لون البوردر
+                                                width: 1, // سمك البوردر
+                                              ),
+                                            ),
+                                            child: const Center(
+                                              child: Text(
+                                                'باقة',
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 16,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
                                         )
                                         : Chip(
                                           label: Text('حر'),
@@ -1077,6 +1297,15 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                 }
 
                                 return Card(
+                                  color: AppColorsDark.bgCardColor,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    side: BorderSide(
+                                      color: AppColorsDark.mainColor
+                                          .withOpacity(0.4),
+                                      width: 1.5,
+                                    ),
+                                  ),
                                   /* color:
                                       (isSub &&
                                               s.end != null &&
@@ -1088,7 +1317,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                     vertical: 6,
                                   ),
                                   child: Padding(
-                                    padding: const EdgeInsets.all(8.0),
+                                    padding: const EdgeInsets.all(16.0),
                                     child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
@@ -1107,20 +1336,22 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                                       Text(
                                                         s.name,
                                                         style: const TextStyle(
+                                                          fontSize: 18,
                                                           fontWeight:
                                                               FontWeight.bold,
                                                         ),
                                                       ),
-                                                      const SizedBox(width: 8),
+                                                      const SizedBox(width: 10),
                                                       badge,
-                                                      const SizedBox(width: 6),
+                                                      const SizedBox(width: 10),
                                                       if (s.savedSubscriptionJson !=
                                                           null)
                                                         const Icon(
                                                           Icons.bookmark,
-                                                          size: 18,
+                                                          size: 22,
                                                           color:
-                                                              Colors.blueAccent,
+                                                              Colors
+                                                                  .transparent,
                                                         ),
                                                     ],
                                                   ),
@@ -1128,15 +1359,29 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                                   if (allowedToday > 0)
                                                     Text(
                                                       allowedToday > 0
-                                                          ? 'حد الاستخدام اليومي: ${_formatMinutes(allowedToday)}'
+                                                          ? 'حد الاستخدام اليومي: ${_formatMinutesSub(allowedToday)}'
                                                           : 'حد الاستخدام اليومي: غير محدود',
                                                     ),
+                                                  /* مدفوع: ${_formatMinutesSub(s.paidMinutes)}*/
                                                   Text(
-                                                    'مضى كلي: ${getSessionMinutes(s)}    مدفوع: ${_formatMinutes(s.paidMinutes)}',
+                                                    'مضى وقت: ${getSessionFormattedTimeSub(s)}   ',
                                                   ),
                                                   if (isSub)
-                                                    Text(
-                                                      'تنتهي الباقة: ${_getSubscriptionEnd(s)?.toLocal().toString().split('.').first ?? 'غير محددة'}',
+                                                    /* Text(
+                                                      'تنتهي الباقة: ${_getSubscriptionEndSub(s)?.toLocal().toString().split('.').first ?? 'غير محددة'}',
+                                                    ),*/
+                                                    Row(
+                                                      children: [
+                                                        Text(
+                                                          'تنتهي الباقة في يوم: ${endParts?['date'] ?? 'غير محدد'}',
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 8,
+                                                        ),
+                                                        Text(
+                                                          'وعند الساعة: ${endParts?['time'] ?? 'غير محدد'}',
+                                                        ),
+                                                      ],
                                                     ),
                                                 ],
                                               ),
@@ -1148,12 +1393,9 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                                     DateTime.now().isAfter(
                                                       s.end!,
                                                     )) ...[
-                                                  ElevatedButton(
-                                                    style:
-                                                        ElevatedButton.styleFrom(
-                                                          backgroundColor:
-                                                              Colors.orange,
-                                                        ),
+                                                  CustomButton(
+                                                    color: Colors.orange,
+                                                    text: "تجديد الباقة",
                                                     onPressed: () async {
                                                       // هنا تعمل منطق تجديد الباقة (مثلاً ترجع الاشتراك القديم أو تفتح شاشة اختيار خطة جديدة)
                                                       await _renewSubscription(
@@ -1162,9 +1404,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                                       if (mounted)
                                                         setState(() {});
                                                     },
-                                                    child: const Text(
-                                                      "تجديد الباقة",
-                                                    ),
+                                                    infinity: false,
                                                   ),
                                                 ] else ...[
                                                   // زر استئناف باقة (لو محفوظة + في يوم جديد)
@@ -1176,28 +1416,144 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                                         s.savedSubscriptionConvertedAt!,
                                                         DateTime.now(),
                                                       ))
-                                                        Padding(
-                                                          padding:
-                                                              const EdgeInsets.only(
-                                                                right: 6.0,
-                                                              ),
-                                                          child: ElevatedButton(
-                                                            onPressed:
-                                                                () =>
-                                                                    _restoreSavedSubscription(
-                                                                      s,
-                                                                    ),
-                                                            child: const Text(
-                                                              'استئناف باقتك',
-                                                            ),
-                                                          ),
+                                                        CustomButton(
+                                                          infinity: false,
+                                                          color: Colors.green,
+                                                          text: 'كمل باقتك',
+                                                          onPressed:
+                                                              () =>
+                                                                  _restoreSavedSubscription(
+                                                                    s,
+                                                                  ),
                                                         ),
                                                   ],
 
-                                                  const SizedBox(width: 6),
+                                                  const SizedBox(width: 10),
+                                                  CustomButton(
+                                                    infinity: false,
+                                                    border:
+                                                        s.isPaused
+                                                            ? false
+                                                            : true,
+                                                    color: Colors.transparent,
+                                                    text:
+                                                        s.isPaused
+                                                            ? 'استكمال الوقت'
+                                                            : 'إيقاف مؤقت',
+                                                    onPressed:
+                                                        canPauseButton
+                                                            ? () async {
+                                                              final now =
+                                                                  DateTime.now();
+
+                                                              if (!s.isPaused) {
+                                                                // Pause الباقة
+                                                                final from =
+                                                                    s.runningSince ??
+                                                                    s.start;
+                                                                final consumed =
+                                                                    now
+                                                                        .difference(
+                                                                          from,
+                                                                        )
+                                                                        .inMinutes;
+                                                                if (consumed >
+                                                                    0)
+                                                                  s.elapsedMinutes +=
+                                                                      consumed;
+
+                                                                s.isPaused =
+                                                                    true;
+                                                                s.pauseStart =
+                                                                    now;
+                                                                s.runningSince =
+                                                                    null;
+
+                                                                await _saveSessionWithEvent(
+                                                                  s,
+                                                                  'paused',
+                                                                  meta: {
+                                                                    'consumedAdded':
+                                                                        consumed,
+                                                                  },
+                                                                );
+                                                              } else {
+                                                                // Resume الباقة
+                                                                int frozen = 0;
+                                                                if (s.pauseStart !=
+                                                                    null) {
+                                                                  frozen =
+                                                                      now
+                                                                          .difference(
+                                                                            s.pauseStart!,
+                                                                          )
+                                                                          .inMinutes;
+                                                                  if (s.end !=
+                                                                      null)
+                                                                    s.end = s.end!.add(
+                                                                      Duration(
+                                                                        minutes:
+                                                                            frozen,
+                                                                      ),
+                                                                    );
+                                                                }
+
+                                                                s.isPaused =
+                                                                    false;
+                                                                s.pauseStart =
+                                                                    null;
+                                                                s.runningSince =
+                                                                    now;
+
+                                                                await _saveSessionWithEvent(
+                                                                  s,
+                                                                  'resumed',
+                                                                  meta: {
+                                                                    'frozenMinutesAdded':
+                                                                        frozen,
+                                                                  },
+                                                                );
+                                                              }
+
+                                                              await SessionDb.updateSession(
+                                                                s,
+                                                              );
+                                                              if (mounted)
+                                                                setState(() {});
+                                                            }
+                                                            : null,
+                                                  ),
+                                                  SizedBox(width: 6),
+                                                  s.isActive
+                                                      ? CustomButton(
+                                                        infinity: false,
+                                                        text: " اضف منتجات",
+                                                        onPressed: () async {
+                                                          final selectedSession =
+                                                              s;
+
+                                                          await showModalBottomSheet(
+                                                            context: context,
+                                                            isScrollControlled:
+                                                                true,
+                                                            builder:
+                                                                (
+                                                                  _,
+                                                                ) => _buildAddProductsAndPay(
+                                                                  selectedSession,
+                                                                ),
+                                                          );
+
+                                                          setState(() {
+                                                            _filteredSessionsSup =
+                                                                _sessionsSub;
+                                                          });
+                                                        },
+                                                      )
+                                                      : const SizedBox.shrink(),
 
                                                   // زر البدء/ايقاف الموحد يتصرف بحسب نوع الجلسة
-                                                  ElevatedButton(
+                                                  /* ElevatedButton(
                                                     onPressed:
                                                         canPauseButton
                                                             ? () async {
@@ -1282,10 +1638,10 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                                             : null,
                                                     child: Text(
                                                       s.isPaused
-                                                          ? 'استئناف'
+                                                          ? 'استمر'
                                                           : 'إيقاف مؤقت',
                                                     ),
-                                                  ),
+                                                  ),*/
 
                                                   /*     const SizedBox(width: 6),
 
@@ -1326,7 +1682,8 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                             s.end != null &&
                                             s.end!.isAfter(DateTime.now())) ...[
                                           const SizedBox(height: 6),
-                                          LinearProgressIndicator(
+                                          /*      */
+                                          /* LinearProgressIndicator(
                                             value: _getSubscriptionProgress(s),
                                             backgroundColor: Colors.grey[300],
                                             color: Colors.blueAccent,
@@ -1347,7 +1704,8 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                                       : Colors.red),
                                             ),
                                             minHeight: 8,
-                                          ),
+                                          ),*/
+                                          /*
                                           Text(
                                             "${((_getSubscriptionProgress(s)! * 100).toStringAsFixed(0))}%",
                                             style: const TextStyle(
@@ -1377,7 +1735,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                                         'آخر إيقاف مؤقت: ${s.pauseStart!.toLocal()}',
                                                       ),
                                                     Text(
-                                                      'Elapsed (دقيقة): ${getSessionMinutes(s)}',
+                                                      'Elapsed (دقيقة): ${getSessionMinutesSub(s)}',
                                                     ),
                                                     const SizedBox(height: 8),
                                                     const Text(
@@ -1408,13 +1766,13 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                                                 ),
                                               ),
                                             ],
-                                          ),
+                                          ),*/
                                         ] else ...[
                                           // هنا يظهر مكانهم كلمة expired
                                           const Padding(
                                             padding: EdgeInsets.all(8.0),
                                             child: Text(
-                                              '⛔ انتهت الباقة (Expired)',
+                                              '⛔ انتهت الباقة ',
                                               style: TextStyle(
                                                 fontSize: 16,
                                                 fontWeight: FontWeight.bold,
@@ -1433,6 +1791,642 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPagee> {
                 ],
               ),
     );
+  }
+
+  double _drawerBalance = 0.0;
+  Future<void> _loadDrawerBalance() async {
+    try {
+      final bal = await FinanceDb.getDrawerBalance();
+      if (mounted) setState(() => _drawerBalance = bal);
+    } catch (e, st) {
+      // طبع الخطأ علشان تعرف لو في مشكلة في DB
+      debugPrint('Failed to load drawer balance: $e\n$st');
+      if (mounted) {
+        // اختياري: تعرض snackbar للمستخدم لو حبيت
+        // ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ في جلب رصيد الدرج')));
+      }
+    }
+  }
+
+  Map<String, TextEditingController> qtyControllers = {};
+  Customer? _currentCustomer;
+  Widget _buildAddProductsAndPay(Session s) {
+    Future<void> _showReceiptDialog(Session s, double productsTotal) async {
+      double discountValue = 0.0;
+      String? appliedCode;
+      final codeCtrl = TextEditingController();
+
+      String paymentMethod = "cash"; // 🟢 افتراضي: كاش
+      final TextEditingController paidCtrl = TextEditingController();
+      final customerId = s.customerId;
+      double customerBalance = 0.0;
+
+      if (customerId != null && customerId.isNotEmpty) {
+        customerBalance = await CustomerBalanceDb.getBalance(customerId);
+      }
+
+      await showDialog(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              double finalTotal = productsTotal - discountValue;
+
+              return AlertDialog(
+                title: Text(
+                  'إيصال الدفع - ${s.name} (الرصيد: ${customerBalance.toStringAsFixed(2)} ج)',
+                ),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 8),
+                      ...s.cart.map(
+                        (item) => Text(
+                          '${item.product.name} x${item.qty} = ${item.total} ج',
+                        ),
+                      ),
+
+                      const SizedBox(height: 12),
+
+                      // المبلغ المطلوب
+                      Text(
+                        'المطلوب: ${finalTotal.toStringAsFixed(2)} ج',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+
+                      const SizedBox(height: 8),
+
+                      // إدخال المبلغ المدفوع
+                      TextField(
+                        controller: paidCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: "المبلغ المدفوع",
+                        ),
+                        onChanged: (val) {
+                          setDialogState(
+                            () {},
+                          ); // كل مرة يتغير فيها المبلغ، يحدث الـ dialog
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      // عرض الباقي أو الفائض
+                      Builder(
+                        builder: (_) {
+                          final paidAmount =
+                              double.tryParse(paidCtrl.text) ?? 0.0;
+                          final diff = paidAmount - finalTotal;
+                          String diffText;
+                          if (diff == 0) {
+                            diffText = '✅ دفع كامل';
+                          } else if (diff > 0) {
+                            diffText =
+                                '💰 الباقي للعميل: ${diff.toStringAsFixed(2)} ج';
+                          } else {
+                            diffText =
+                                '💸 على العميل: ${(diff.abs()).toStringAsFixed(2)} ج';
+                          }
+                          return Text(
+                            diffText,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  // داخل actions: []
+                  ElevatedButton(
+                    onPressed: () async {
+                      final paidAmount = double.tryParse(paidCtrl.text) ?? 0.0;
+                      final diff = paidAmount - finalTotal;
+                      if (paidAmount < finalTotal) {
+                        // رسالة تحذير: المبلغ أقل من المطلوب
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('⚠️ المبلغ المدفوع أقل من المطلوب.'),
+                          ),
+                        );
+                        return; // لا يتم تنفيذ أي شيء
+                      }
+                      if (diff > 0) {
+                        // خصم الفائض من الدرج
+                        await AdminDataService.instance.addSale(
+                          Sale(
+                            id: generateId(),
+                            description: 'سداد الباقي كاش للعميل',
+                            amount: diff,
+                          ),
+                          paymentMethod: 'cash',
+                          updateDrawer: true,
+                          drawerDelta: -diff, // خصم من الدرج بدل الإضافة
+                        );
+
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              '💵 أخذ العميل باقي ${diff.toStringAsFixed(2)} ج كاش من الدرج',
+                            ),
+                          ),
+                        );
+                      }
+
+                      // تحديث دقائق الدفع
+                      //    s.paidMinutes += minutesToCharge;
+                      s.amountPaid += paidAmount;
+
+                      // ---- قفل الجلسة وتحديث DB ----
+                      /* setState(() {
+                        s.isActive = false;
+                        s.isPaused = false;
+                      });
+                      await SessionDb.updateSession(s);
+*/
+                      // حفظ المبيعة كما هي
+                      final sale = Sale(
+                        id: generateId(),
+                        description:
+                            'جلسة ${s.name} |   منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}',
+                        amount: paidAmount,
+                      );
+
+                      await AdminDataService.instance.addSale(
+                        sale,
+                        paymentMethod: paymentMethod,
+                        customer: _currentCustomer,
+                        updateDrawer: paymentMethod == "cash",
+                      );
+
+                      try {
+                        await _loadDrawerBalance();
+                      } catch (e, st) {
+                        debugPrint('Failed to update drawer: $e\n$st');
+                      }
+
+                      Navigator.pop(context);
+
+                      // إشعار للمستخدم بأن الباقي أخذ كاش
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            '💵 الباقي ${diff > 0 ? diff.toStringAsFixed(2) : 0} ج أخذ كاش',
+                          ),
+                        ),
+                      );
+                    },
+                    child: const Text('تأكيد الدفع بالكامل'),
+                  ),
+
+                  ElevatedButton(
+                    onPressed: () async {
+                      // required / paid / diff
+                      final requiredAmount = finalTotal;
+                      final paidAmount = double.tryParse(paidCtrl.text) ?? 0.0;
+                      final diff = paidAmount - requiredAmount;
+
+                      // تحديث دقائق الدفع داخل الجلسة
+                      /* s.paidMinutes += minutesToCharge;*/
+                      s.amountPaid += paidAmount;
+
+                      // ---- تحديث رصيد العميل بشكل صحيح ----
+                      // 1) نحدد customerId الهدف: نفضل s.customerId ثم _currentCustomer
+                      String? targetCustomerId =
+                          s.customerId ?? _currentCustomer?.id;
+
+                      // 2) لو لسه فاضي حاول نبحث عن العميل بالاسم، وإن لم يوجد - ننشئ واحد جديد
+                      if (targetCustomerId == null ||
+                          targetCustomerId.isEmpty) {
+                        // حاول إيجاد العميل في DB بحسب الاسم
+                        final found = await CustomerDb.getByName(s.name);
+                        if (found != null) {
+                          targetCustomerId = found.id;
+                        } else {
+                          // لو اسم موجود في الحقل ونفّذنا إنشاء: ننشئ عميل جديد ونتخزن
+                          if (s.name.trim().isNotEmpty) {
+                            final newCustomer = Customer(
+                              id: generateId(),
+                              name: s.name,
+                              phone: null,
+                              notes: null,
+                            );
+                            await CustomerDb.insert(newCustomer);
+                            // حدث الذاكرة المحلية إن وُجد (AdminDataService)
+                            try {
+                              AdminDataService.instance.customers.add(
+                                newCustomer,
+                              );
+                            } catch (_) {}
+                            targetCustomerId = newCustomer.id;
+                          }
+                        }
+                      }
+
+                      if (targetCustomerId != null &&
+                          targetCustomerId.isNotEmpty) {
+                        // احصل الرصيد القديم من الذاكرة (أو استخدم 0)
+                        final oldBalance = AdminDataService
+                            .instance
+                            .customerBalances
+                            .firstWhere(
+                              (b) => b.customerId == targetCustomerId,
+                              orElse:
+                                  () => CustomerBalance(
+                                    customerId: targetCustomerId!,
+                                    balance: 0.0,
+                                  ),
+                            );
+
+                        final newBalance = oldBalance.balance + diff;
+                        final updated = CustomerBalance(
+                          customerId: targetCustomerId,
+                          balance: newBalance,
+                        );
+
+                        // اكتب للـ DB
+                        await CustomerBalanceDb.upsert(updated);
+
+                        // حدّث الذاكرة (AdminDataService)
+                        final idx = AdminDataService.instance.customerBalances
+                            .indexWhere(
+                              (b) => b.customerId == targetCustomerId,
+                            );
+                        if (idx >= 0) {
+                          AdminDataService.instance.customerBalances[idx] =
+                              updated;
+                        } else {
+                          AdminDataService.instance.customerBalances.add(
+                            updated,
+                          );
+                        }
+                      } else {
+                        // لم نتمكن من إيجاد/إنشاء عميل --> تسجّل ملاحظۀ debug
+                        debugPrint(
+                          'No customer id for session ${s.id}; balance not updated.',
+                        );
+                      }
+
+                      /*   // ---- قفل الجلسة وتحديث DB ----
+                      setState(() {
+                        s.isActive = false;
+                        s.isPaused = false;
+                      });
+                      await SessionDb.updateSession(s);
+*/
+                      // ---- حفظ المبيعة ----
+                      final sale = Sale(
+                        id: generateId(),
+                        description:
+                            'جلسة ${s.name} | منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}'
+                            '${appliedCode != null ? " (بكود $appliedCode)" : ""}',
+                        amount: paidAmount,
+                      );
+
+                      await AdminDataService.instance.addSale(
+                        sale,
+                        paymentMethod: paymentMethod,
+                        customer: _currentCustomer,
+                        updateDrawer: paymentMethod == "cash",
+                      );
+
+                      try {
+                        await _loadDrawerBalance();
+                      } catch (e, st) {
+                        debugPrint('Failed to update drawer: $e\n$st');
+                      }
+
+                      Navigator.pop(context);
+
+                      // إشعار للمستخدم (باقي/له/عليه)
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            diff == 0
+                                ? '✅ دفع كامل: ${paidAmount.toStringAsFixed(2)} ج'
+                                : diff > 0
+                                ? '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي له ${diff.toStringAsFixed(2)} ج عندك'
+                                : '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي عليك ${(diff.abs()).toStringAsFixed(2)} ج',
+                          ),
+                        ),
+                      );
+                    },
+                    child: const Text('علي الحساب'),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('إلغاء'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    }
+
+    void _completeAndPayForProducts(Session s) async {
+      final productsTotal = s.cart.fold(0.0, (sum, item) => sum + item.total);
+
+      if (productsTotal == 0) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("لا يوجد منتجات للإتمام")));
+        return;
+      }
+
+      await _showReceiptDialog(
+        s,
+        productsTotal,
+        // مفيش دقائق شحن هنا
+      );
+    }
+
+    Product? selectedProduct;
+    TextEditingController qtyCtrl = TextEditingController(text: '1');
+
+    return StatefulBuilder(
+      builder: (context, setSheetState) {
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Dropdown لاختيار المنتج
+              DropdownButtonFormField<Product>(
+                value: selectedProduct,
+                hint: const Text(
+                  'اختر منتج/مشروب',
+                  style: TextStyle(color: Colors.white70),
+                ),
+                dropdownColor: Colors.grey[850],
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: AppColorsDark.bgCardColor,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 14,
+                  ),
+                ),
+                items:
+                    AdminDataService.instance.products.map((p) {
+                      return DropdownMenuItem(
+                        value: p,
+                        child: Text(
+                          '${p.name} (${p.price} ج - ${p.stock} متاح)',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      );
+                    }).toList(),
+                onChanged: (val) {
+                  setSheetState(() => selectedProduct = val);
+                },
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: qtyCtrl,
+                      style: const TextStyle(color: Colors.white),
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: 'عدد',
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        filled: true,
+                        fillColor: Colors.grey[800],
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  CustomButton(
+                    text: "اضف",
+                    onPressed: () async {
+                      if (selectedProduct == null) return;
+
+                      final qty = int.tryParse(qtyCtrl.text) ?? 1;
+                      if (qty <= 0) return;
+
+                      // تحقق من المخزون
+                      if (selectedProduct!.stock < qty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              '⚠️ المخزون غير كافي (${selectedProduct!.stock} فقط)',
+                            ),
+                          ),
+                        );
+                        return;
+                      }
+
+                      // خصم المخزون مؤقتًا
+                      /*    selectedProduct!.stock -= qty;
+                      final index = AdminDataService.instance.products
+                          .indexWhere((p) => p.id == selectedProduct!.id);
+                      if (index != -1)
+                        AdminDataService.instance.products[index].stock =
+                            selectedProduct!.stock;*/
+
+                      // إضافة للكارت
+                      final item = CartItem(
+                        id: generateId(),
+                        product: selectedProduct!,
+                        qty: qty,
+                      );
+                      await CartDb.insertCartItem(item, s.id);
+
+                      final updatedCart = await CartDb.getCartBySession(s.id);
+                      setSheetState(() => s.cart = updatedCart);
+                    },
+                    infinity: false,
+                  ),
+                  /* ElevatedButton(
+                    onPressed: () async {
+                      final qty = int.tryParse(qtyCtrl.text) ?? 1;
+                      if (selectedProduct != null) {
+                        final item = CartItem(
+                          id: generateId(),
+                          product: selectedProduct!,
+                          qty: qty,
+                        );
+
+                        await CartDb.insertCartItem(item, s.id);
+
+                        final updatedCart = await CartDb.getCartBySession(s.id);
+                        setSheetState(() => s.cart = updatedCart);
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blueAccent,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 14,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: const Text(
+                      'اضف',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),*/
+                ],
+              ),
+              const SizedBox(height: 12),
+              // قائمة العناصر المضافة
+              ...s.cart.map((item) {
+                final qtyController = TextEditingController(
+                  text: item.qty.toString(),
+                );
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.product.name,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 60,
+                        child: TextField(
+                          controller: qtyController,
+                          style: const TextStyle(color: Colors.white),
+                          keyboardType: TextInputType.number,
+                          onChanged: (val) async {
+                            final newQty = int.tryParse(val) ?? item.qty;
+
+                            // تحقق من المخزون عند تعديل الكمية
+                            final availableStock =
+                                item.product.stock + item.qty;
+                            if (newQty > availableStock) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    '⚠️ المخزون غير كافي (${availableStock} فقط)',
+                                  ),
+                                ),
+                              );
+                              setSheetState(() {});
+                              return;
+                            }
+
+                            // تعديل المخزون
+                            item.product.stock += (item.qty - newQty);
+                            final idx = AdminDataService.instance.products
+                                .indexWhere((p) => p.id == item.product.id);
+                            if (idx != -1)
+                              AdminDataService.instance.products[idx].stock =
+                                  item.product.stock;
+
+                            item.qty = newQty;
+                            await CartDb.updateCartItemQty(item.id, newQty);
+                            setSheetState(() {});
+                          },
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: Colors.grey[800],
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 10,
+                            ),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.redAccent),
+                        onPressed: () async {
+                          await CartDb.deleteCartItem(item.id);
+
+                          // إعادة الكمية للمخزون
+                          item.product.stock += item.qty;
+                          final idx = AdminDataService.instance.products
+                              .indexWhere((p) => p.id == item.product.id);
+                          if (idx != -1)
+                            AdminDataService.instance.products[idx].stock =
+                                item.product.stock;
+
+                          s.cart.remove(item);
+                          setSheetState(() {});
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+              const SizedBox(height: 12),
+              CustomButton(
+                text: "إتمام ودفع",
+                onPressed: () async {
+                  Navigator.pop(context);
+                  // 1️⃣ افتح نافذة الدفع أولًا
+                  _completeAndPayForProducts(s);
+
+                  // 2️⃣ خصم المخزون من المنتجات
+                  for (var item in s.cart) {
+                    await sellProduct(item.product, item.qty);
+
+                    // 3️⃣ امسح الـ controller
+                    qtyControllers[item.id]?.dispose();
+                    qtyControllers.remove(item.id);
+                  }
+
+                  // 4️⃣ مسح الكارت من الذاكرة وDB
+                  for (var item in s.cart) {
+                    await CartDb.deleteCartItem(item.id);
+                  }
+                  s.cart.clear();
+
+                  // 5️⃣ حدث الـ UI
+                  setSheetState(() {});
+                },
+                infinity: false,
+                color: Colors.green,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> sellProduct(Product product, int qty) async {
+    if (qty <= 0) return;
+
+    // 1️⃣ خصم من الـ DB
+    final newStock = max(0, product.stock - qty);
+    product.stock = newStock;
+    await ProductDb.insertProduct(product); // تحديث المخزون في DB
+
+    // 2️⃣ خصم من AdminDataService
+    final index = AdminDataService.instance.products.indexWhere(
+      (p) => p.id == product.id,
+    );
+    if (index != -1) {
+      AdminDataService.instance.products[index].stock = newStock;
+    }
+
+    setState(() {}); // تحديث الـ UI
   }
 }
 

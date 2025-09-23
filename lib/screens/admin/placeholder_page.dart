@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:workspace/utils/colors.dart';
+import 'package:workspace/widget/buttom.dart';
+import 'package:workspace/widget/form.dart';
 import '../../core/data_service.dart'; // فيه PricingSettings
 import '../../core/db_helper_main_time.dart'; // فيه PricingDb
 
@@ -65,9 +68,9 @@ class _PricingSettingsPageState extends State<PricingSettingsPage> {
     return Scaffold(
       //  backgroundColor: const Color(0xFF071022),
       appBar: AppBar(
-        title: const Text('إعدادات التسعير'),
+        title: Center(child: const Text('إعدادات التسعير')),
         centerTitle: true,
-        backgroundColor: Color(0xFF071022),
+        forceMaterialTransparency: true,
         elevation: 0,
       ),
       body: SingleChildScrollView(
@@ -82,7 +85,14 @@ class _PricingSettingsPageState extends State<PricingSettingsPage> {
             const SizedBox(height: 12),
             _buildCardField(_dailyCap, 'الحد اليومي الأعلى'),
             const SizedBox(height: 24),
-            SizedBox(
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: CustomButton(
+                text: ' حفظ التغييرات',
+                onPressed: _saveSettings,
+              ),
+            ),
+            /*      SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: _saveSettings,
@@ -105,6 +115,7 @@ class _PricingSettingsPageState extends State<PricingSettingsPage> {
                 ),
               ),
             ),
+      */
           ],
         ),
       ),
@@ -113,13 +124,15 @@ class _PricingSettingsPageState extends State<PricingSettingsPage> {
 
   Widget _buildCardField(TextEditingController controller, String label) {
     return Card(
-      elevation: 3,
-      shadowColor: Colors.black54,
+      elevation: 0,
+      //shadowColor: Colors.black54,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      color: const Color(0xFF1A2233),
+      color: Colors.transparent,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: TextField(
+
+        child: CustomFormField(hint: label, controller: controller),
+        /* TextField(
           controller: controller,
           keyboardType: TextInputType.number,
           style: const TextStyle(color: Colors.white),
@@ -128,7 +141,7 @@ class _PricingSettingsPageState extends State<PricingSettingsPage> {
             labelStyle: const TextStyle(color: Colors.white70),
             border: InputBorder.none,
           ),
-        ),
+        ),*/
       ),
     );
   }

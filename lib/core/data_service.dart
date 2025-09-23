@@ -339,6 +339,8 @@ class AdminDataService {
     discounts.removeWhere((d) => d.id == id);
   }
 
+  //=============room
+
   // ------------------- الإحصائيات -------------------
   double get totalSales => sales.fold(0.0, (p, e) => p + e.amount);
   double get totalExpenses => expenses.fold(0.0, (p, e) => p + e.amount);

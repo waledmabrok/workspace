@@ -1,6 +1,9 @@
+import 'dart:math';
+
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'Db_helper.dart';
 
+import 'data_service.dart';
 import 'models.dart';
 
 class ProductDb {
@@ -11,6 +14,25 @@ class ProductDb {
       product.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  Future<void> sellProduct(Product p, int qty) async {
+    if (qty <= 0) return;
+
+    // 1️⃣ تحديث قاعدة البيانات
+    final newStock = max(0, p.stock - qty);
+    p.stock = newStock;
+    await ProductDb.insertProduct(p); // replace old stock
+
+    // 2️⃣ تحديث AdminDataService
+    final index = AdminDataService.instance.products.indexWhere(
+      (prod) => prod.id == p.id,
+    );
+    if (index != -1) {
+      AdminDataService.instance.products[index].stock = newStock;
+    }
+
+    // تحديث الـ UI
   }
 
   static Future<List<Product>> getProducts() async {

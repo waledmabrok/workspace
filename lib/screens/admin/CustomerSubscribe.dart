@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:workspace/utils/colors.dart';
+import 'package:workspace/widget/buttom.dart';
 import '../../core/db_helper_cart.dart';
 import '../../core/db_helper_sessions.dart';
 import '../../core/models.dart';
+
+enum FilterType { all, subscribers, payg }
 
 class AdminSubscribersPage extends StatefulWidget {
   const AdminSubscribersPage({super.key});
@@ -16,6 +20,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
   bool _loading = true;
   bool _showOnlyWithSubs = true;
 
+  FilterType _currentFilter = FilterType.all;
   @override
   void initState() {
     super.initState();
@@ -101,28 +106,59 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
             final dayEnd = dayStart.add(const Duration(days: 1));
             final overlaps = start.isBefore(dayEnd) && end.isAfter(dayStart);
 
-            if (_showOnlyWithSubs) return overlaps && s.subscription != null;
-            return overlaps;
+            if (!overlaps) return false;
+
+            switch (_currentFilter) {
+              case FilterType.all:
+                return true;
+              case FilterType.subscribers:
+                return s.subscription != null;
+              case FilterType.payg:
+                return s.subscription == null;
+            }
           }).toList()
           ..sort((a, b) => a.name.compareTo(b.name));
 
     return Scaffold(
       appBar: AppBar(
         forceMaterialTransparency: true,
-        title: const Text('المشتركين - باقات'),
+        title: Center(child: const Text('المشتركين - باقات')),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'تحديث',
             onPressed: _loadSessions,
           ),
-          IconButton(
-            icon: Icon(
-              _showOnlyWithSubs ? Icons.filter_alt : Icons.filter_alt_off,
-            ),
-            tooltip: _showOnlyWithSubs ? "عرض الكل" : "عرض المشتركين فقط",
-            onPressed:
-                () => setState(() => _showOnlyWithSubs = !_showOnlyWithSubs),
+
+          Row(
+            children: [
+              // عرض المشتركين فقط
+              if (_currentFilter != FilterType.subscribers)
+                IconButton(
+                  icon: Icon(Icons.person),
+                  tooltip: "عرض المشتركين فقط",
+                  onPressed:
+                      () => setState(
+                        () => _currentFilter = FilterType.subscribers,
+                      ),
+                ),
+              // عرض الحر فقط
+              if (_currentFilter != FilterType.payg)
+                IconButton(
+                  icon: Icon(Icons.person_outline),
+                  tooltip: "عرض الحر فقط",
+                  onPressed:
+                      () => setState(() => _currentFilter = FilterType.payg),
+                ),
+              // عرض الكل
+              if (_currentFilter != FilterType.all)
+                IconButton(
+                  icon: Icon(Icons.filter_alt),
+                  tooltip: "عرض الكل",
+                  onPressed:
+                      () => setState(() => _currentFilter = FilterType.all),
+                ),
+            ],
           ),
         ],
       ),
@@ -136,9 +172,25 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                     padding: const EdgeInsets.all(12.0),
                     child: Row(
                       children: [
-                        const Text("عرض ليوم:"),
+                        const Text("عرض ليوم:", style: TextStyle(fontSize: 18)),
                         const SizedBox(width: 8),
-                        ElevatedButton.icon(
+                        CustomButton(
+                          infinity: false,
+                          border: true,
+                          text:
+                              "${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}",
+                          onPressed: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: _selectedDate,
+                              firstDate: DateTime(2000),
+                              lastDate: DateTime(2100),
+                            );
+                            if (picked != null)
+                              setState(() => _selectedDate = picked);
+                          },
+                        ),
+                        /*   ElevatedButton.icon(
                           icon: const Icon(Icons.calendar_today),
                           label: Text(
                             "${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}",
@@ -153,15 +205,24 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                             if (picked != null)
                               setState(() => _selectedDate = picked);
                           },
-                        ),
+                        ),*/
                         const SizedBox(width: 12),
-                        ElevatedButton(
+                        CustomButton(
+                          text: "اليوم",
+                          border: true,
+                          infinity: false,
+                          onPressed:
+                              () => setState(
+                                () => _selectedDate = DateTime.now(),
+                              ),
+                        ),
+                        /*     ElevatedButton(
                           onPressed:
                               () => setState(
                                 () => _selectedDate = DateTime.now(),
                               ),
                           child: const Text("اليوم"),
-                        ),
+                        ),*/
                       ],
                     ),
                   ),
@@ -195,78 +256,80 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                                 final overallEnd = _getSubscriptionEnd(s);
 
                                 return Card(
+                                  color: AppColorsDark.bgCardColor,
+                                  shape:
+                                      plan == null
+                                          ? null
+                                          : RoundedRectangleBorder(
+                                            side: BorderSide(
+                                              color: AppColorsDark.mainColor,
+                                              width: 2,
+                                            ), // اللون والسمك
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ), // تقوس الحواف
+                                          ),
                                   margin: const EdgeInsets.symmetric(
                                     horizontal: 10,
                                     vertical: 6,
                                   ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  elevation: 3,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      gradient: const LinearGradient(
-                                        colors: [
-                                          Color(0xFF1A2233),
-                                          Color(0xFF0B0F1A),
-                                        ], // نفس الداكن + تدريج خفيف
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
+
+                                  elevation: 0,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(12),
                                       ),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: ListTile(
-                                      isThreeLine: true,
-                                      title: Text(
-                                        s.name,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white,
+                                      child: ListTile(
+                                        isThreeLine: true,
+                                        title: Text(
+                                          s.name,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.white,
+                                          ),
                                         ),
-                                      ),
-                                      subtitle: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          if (plan != null)
+                                        subtitle: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            if (plan != null)
+                                              Text(
+                                                "باقة: ${plan.name} • نوع: ${plan.durationType}",
+                                                style: const TextStyle(
+                                                  color: Colors.white70,
+                                                ),
+                                              ),
+                                            if (plan == null)
+                                              const Text(
+                                                "❌ بدون اشتراك",
+                                                style: TextStyle(
+                                                  color: Colors.redAccent,
+                                                ),
+                                              ),
+                                            const SizedBox(height: 4),
                                             Text(
-                                              "باقة: ${plan.name} • نوع: ${plan.durationType}",
+                                              "اليوم: ${_formatMinutes(spentToday)} • المتبقي اليوم: ${remainingToday >= 0 ? _formatMinutes(remainingToday) : 'غير محدد'}",
                                               style: const TextStyle(
                                                 color: Colors.white70,
                                               ),
                                             ),
-                                          if (plan == null)
-                                            const Text(
-                                              "❌ بدون اشتراك",
-                                              style: TextStyle(
-                                                color: Colors.redAccent,
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              "مضى كلي: ${_formatMinutes(totalSoFar)} • تنتهي: ${overallEnd != null ? overallEnd.toLocal().toString().split('.').first : 'غير محدد'}",
+                                              style: const TextStyle(
+                                                color: Colors.white70,
                                               ),
                                             ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            "اليوم: ${_formatMinutes(spentToday)} • المتبقي اليوم: ${remainingToday >= 0 ? _formatMinutes(remainingToday) : 'غير محدد'}",
-                                            style: const TextStyle(
-                                              color: Colors.white70,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            "مضى كلي: ${_formatMinutes(totalSoFar)} • تنتهي: ${overallEnd != null ? overallEnd.toLocal().toString().split('.').first : 'غير محدد'}",
-                                            style: const TextStyle(
-                                              color: Colors.white70,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      trailing: ElevatedButton(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor:
-                                              Colors
-                                                  .green[600], // زر التفاصيل أخضر
-                                          minimumSize: const Size(60, 36),
+                                          ],
                                         ),
-                                        onPressed: () => _showSessionDetails(s),
-                                        child: const Text('تفاصيل'),
+                                        trailing: CustomButton(
+                                          text: "تفاصيل",
+                                          onPressed:
+                                              () => _showSessionDetails(s),
+                                          infinity: false,
+                                        ),
                                       ),
                                     ),
                                   ),

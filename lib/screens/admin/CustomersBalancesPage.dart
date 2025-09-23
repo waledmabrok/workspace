@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:workspace/utils/colors.dart';
 import '../../core/models.dart';
 import '../../core/db_helper_customers.dart';
 import '../../core/db_helper_customer_balance.dart';
@@ -88,10 +89,14 @@ class _CustomersBalancesPageState extends State<CustomersBalancesPage>
     return Scaffold(
       appBar: AppBar(
         forceMaterialTransparency: true,
-        title: const Text('رصيد العملاء'),
+        title: Center(child: const Text('رصيد العملاء')),
         bottom: TabBar(
+          labelStyle: TextStyle(color: Colors.white),
           controller: _tabController,
-          tabs: const [Tab(text: 'باقي ليه'), Tab(text: 'عليه ليك')],
+          tabs: const [
+            Tab(text: 'المتبقي ليه من المره الي فاتت'),
+            Tab(text: 'الشكك'),
+          ],
         ),
         actions: [
           // زر اختيار التاريخ
@@ -142,17 +147,17 @@ class _CustomersBalancesPageState extends State<CustomersBalancesPage>
                       orElse:
                           () => CustomerBalance(customerId: c.id, balance: 0.0),
                     )
-                    .balance;
-
+                    .balance; /*
+            تليفون: ${c.phone ?? "-"}*/
             return Card(
-              color: const Color(0xFF071022),
+              color: AppColorsDark.bgCardColor,
               child: ListTile(
                 title: Text(
                   c.name,
                   style: const TextStyle(color: Colors.white),
                 ),
                 subtitle: Text(
-                  'تليفون: ${c.phone ?? "-"}\nالرصيد: ${balance.toStringAsFixed(2)} ج',
+                  '\nالرصيد: ${balance.toStringAsFixed(2)} ج',
                   style: const TextStyle(color: Colors.white70),
                 ),
                 trailing: Text(
@@ -160,9 +165,9 @@ class _CustomersBalancesPageState extends State<CustomersBalancesPage>
                       ? "له ${balance.toStringAsFixed(2)} ج"
                       : "عليه ${balance.abs().toStringAsFixed(2)} ج",
                   style: TextStyle(
-                    color:
-                        balance > 0 ? Colors.greenAccent : Colors.purpleAccent,
+                    color: balance > 0 ? Colors.greenAccent : Colors.red,
                     fontWeight: FontWeight.bold,
+                    fontSize: 15,
                   ),
                 ),
                 onTap: () => _adjustBalance(c, balance),

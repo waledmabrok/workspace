@@ -17,12 +17,12 @@ class DbHelper {
     final databaseFactory = databaseFactoryFfi;
 
     final dbPath = await databaseFactory.getDatabasesPath();
-    final path = join(dbPath, 'workspace6.db');
+    final path = join(dbPath, 'workspace20.db');
 
     _database = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 6,
+        version: 10,
         onCreate: _onCreate,
 
         onOpen: (db) async {
@@ -32,12 +32,83 @@ class DbHelper {
           await _ensureSessionsColumns(db);
           await _ensureShiftsColumns(db);
           await _ensureShiftTables(db);
+          await _ensureRoomsColumns(db);
+          await _ensurePricingSettingsRoom(db);
           await migrateSalesTable(db);
+          await _ensureNotificationsTable(db);
         },
       ),
     );
 
     return _database!;
+  }
+
+  Future<void> _ensurePricingSettingsRoom(Database db) async {
+    // إنشاء الجدول إذا مش موجود
+    await db.execute('''
+    CREATE TABLE IF NOT EXISTS pricing_settings_Room (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      firstFreeMinutesRoom INTEGER DEFAULT 15,
+      firstHourFeeRoom REAL DEFAULT 30,
+      perHourAfterFirstRoom REAL DEFAULT 20,
+      dailyCapRoom REAL DEFAULT 150
+    )
+  ''');
+
+    // التأكد من وجود صف واحد على الأقل
+    final rows = await db.query('pricing_settings_Room', limit: 1);
+    if (rows.isEmpty) {
+      await db.insert('pricing_settings_Room', {
+        'firstFreeMinutesRoom': 15,
+        'firstHourFeeRoom': 30,
+        'perHourAfterFirstRoom': 20,
+        'dailyCapRoom': 150,
+      });
+    }
+  }
+
+  Future<void> _ensureNotificationsTable(Database db) async {
+    try {
+      await db.execute('''
+      CREATE TABLE IF NOT EXISTS notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sessionId TEXT,
+        type TEXT,
+        message TEXT,
+        isRead INTEGER DEFAULT 0,
+        createdAt INTEGER DEFAULT (strftime('%s','now') * 1000),
+        UNIQUE(sessionId, type) ON CONFLICT IGNORE
+      )
+    ''');
+    } catch (e) {
+      debugPrint('[_ensureNotificationsTable] error: $e');
+    }
+  }
+
+  Future<void> _ensureRoomsColumns(Database db) async {
+    final cols = await db.rawQuery('PRAGMA table_info(rooms)');
+    final colNames = cols.map((c) => c['name'] as String).toList();
+
+    if (!colNames.contains('firstFreeMinutesRoom')) {
+      await db.execute(
+        'ALTER TABLE rooms ADD COLUMN firstFreeMinutesRoom INTEGER DEFAULT 15',
+      );
+    }
+    if (!colNames.contains('firstHourFeeRoom')) {
+      await db.execute(
+        'ALTER TABLE rooms ADD COLUMN firstHourFeeRoom REAL DEFAULT 30.0',
+      );
+    }
+    if (!colNames.contains('perHourAfterFirstRoom')) {
+      await db.execute(
+        'ALTER TABLE rooms ADD COLUMN perHourAfterFirstRoom REAL DEFAULT 20.0',
+      );
+    }
+    if (!colNames.contains('dailyCapRoom')) {
+      await db.execute(
+        'ALTER TABLE rooms ADD COLUMN dailyCapRoom REAL DEFAULT 150.0',
+      );
+    }
   }
 
   Future<void> migrateSalesTable(Database db) async {
@@ -104,6 +175,20 @@ class DbHelper {
       )
     ''');
 
+    //notification
+    await db.execute('''
+   CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId TEXT,
+  type TEXT,          -- expiring / expired / dailyLimit
+  message TEXT,
+  isRead INTEGER DEFAULT 0,
+  createdAt TEXT,
+  UNIQUE(sessionId, type) ON CONFLICT IGNORE
+)
+
+    ''');
+
     // المنتجات
     await db.execute('''
       CREATE TABLE products (
@@ -129,8 +214,24 @@ class DbHelper {
       CREATE TABLE  rooms (
   id TEXT PRIMARY KEY,
   name TEXT,
-  basePrice REAL -- السعر الأساسي للغرفة للساعة أو للعدد الأساسي من الأشخاص
+  basePrice REAL, -- السعر الأساسي للغرفة للساعة أو للعدد الأساسي من الأشخاص
+  firstFreeMinutesRoom INTEGER,
+firstHourFeeRoom REAL,
+perHourAfterFirstRoom REAL,
+dailyCapRoom REAL
+
 );
+
+    ''');
+    await db.execute('''
+  CREATE TABLE IF NOT EXISTS pricing_settings_Room (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  firstFreeMinutesRoom INTEGER DEFAULT 15,
+  firstHourFeeRoom REAL DEFAULT 30,
+  perHourAfterFirstRoom REAL DEFAULT 20,
+  dailyCapRoom REAL DEFAULT 150
+);
+
 
     ''');
     // الغرفه

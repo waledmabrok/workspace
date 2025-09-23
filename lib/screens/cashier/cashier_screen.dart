@@ -1,7 +1,12 @@
+import 'dart:convert';
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:workspace/screens/cashier/user_Subscripe.dart';
+import 'package:workspace/utils/colors.dart';
 import '../../core/Db_helper.dart';
 import '../../core/FinanceDb.dart';
+import '../../core/NotificationsDb.dart';
 import '../../core/db_helper_Subscribe.dart';
 import '../../core/db_helper_cart.dart';
 import '../../core/db_helper_customers.dart';
@@ -11,7 +16,11 @@ import '../../core/data_service.dart';
 import '../../core/db_helper_sessions.dart';
 import 'dart:async';
 
+import '../../core/product_db.dart';
+import '../../widget/buttom.dart';
 import '../../widget/dialog.dart';
+import '../../widget/dropDown.dart';
+import '../../widget/form.dart';
 import '../admin/CustomerSubscribe.dart';
 import 'notification.dart';
 import 'Rooms.dart';
@@ -24,10 +33,14 @@ class CashierScreen extends StatefulWidget {
   State<CashierScreen> createState() => _CashierScreenState();
 }
 
-class _CashierScreenState extends State<CashierScreen> {
+class _CashierScreenState extends State<CashierScreen>
+    with TickerProviderStateMixin {
+  late TabController _tabController;
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _qtyCtrl = TextEditingController(text: '1');
   final TextEditingController _searchCtrl = TextEditingController();
+  final GlobalKey<AdminSubscribersPageeState> _subsKey = GlobalKey();
+
   String? _currentShiftId;
   // داخل class _CashierScreenState
   String get _currentCustomerName {
@@ -50,6 +63,263 @@ class _CashierScreenState extends State<CashierScreen> {
   Discount? _appliedDiscount;
   final TextEditingController _discountCodeCtrl = TextEditingController();
 
+  ///=================================Subscrib=================
+  bool _loading = true;
+  List<Session> _sessionsSub = [];
+  Future<void> _loadSessionsSub() async {
+    setState(() => _loading = true);
+    final data = await SessionDb.getSessions();
+    for (var s in data) {
+      try {
+        s.cart = await CartDb.getCartBySession(s.id);
+      } catch (_) {}
+    }
+    setState(() {
+      _sessionsSub = data;
+      _loading = false;
+    });
+  }
+
+  Future<void> _applyDailyLimitForAllSessionsSub() async {
+    final now = DateTime.now();
+    debugPrint("⏳ [_applyDailyLimitForAllSessions] Checking at $now ...");
+
+    final toConvert = <Session>[];
+
+    for (var s in _sessionsSub) {
+      if (!s.isActive) continue;
+      if (s.type == 'حر') continue;
+      if (s.subscription == null) continue;
+      if (s.end != null && now.isAfter(s.end!)) {
+        s.isActive = false;
+        await SessionDb.updateSession(s);
+        continue;
+      }
+
+      final plan = s.subscription!;
+      if (plan.dailyUsageType != 'limited' || plan.dailyUsageHours == null)
+        continue;
+
+      final spentToday = _getMinutesConsumedTodaySub(s, now);
+      final allowedToday = plan.dailyUsageHours! * 60;
+
+      debugPrint(
+        "➡️ Session ${s.name}: spentToday=$spentToday / allowed=$allowedToday",
+      );
+
+      if (spentToday >= allowedToday) {
+        toConvert.add(s);
+      }
+    }
+
+    // تحويل الجلسات التي وصلت الحد اليومي
+    for (final s in toConvert) {
+      await convertSubscriptionToPayg_CreateNew(s);
+    }
+
+    await _loadSessionsSub();
+  }
+
+  int _minutesOverlapWithDateSub(Session s, DateTime date) {
+    // إذا الجلسة دلوقتي حر فنرجع 0 — لا نحسب وقت بعد التحويل كباقي باقة
+    if (s.type == 'حر') return 0;
+
+    final dayStart = DateTime(date.year, date.month, date.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+    final now = DateTime.now();
+
+    // دالة مساعدة: كم دقّة استهلكت الجلسة من بداية الـ session حتى وقت محدد
+    int consumedUntil(DateTime t) {
+      // نمنع حساب زمن من المستقبل
+      final upto = t.isBefore(now) ? t : now;
+      // نعطي نسخة مؤقتة من الsession لنستخدم دوالنا بصورة صحيحة
+      // أسهل طريقه: نحتسب استهلاك حتى upto بنفس منطق getSessionMinutes لكن محددًا بـ upto
+      final effectiveEnd = _getSubscriptionEndSub(s) ?? upto;
+      final end = effectiveEnd.isBefore(upto) ? effectiveEnd : upto;
+      final totalSinceStart = end.difference(s.start).inMinutes;
+      int frozen = s.frozenMinutes;
+      // إذا كان هناك إيقاف جارٍ وبدأ قبل `upto`، نحسب جزء التجميد حتى upto
+      if (s.isPaused && s.pauseStart != null && s.pauseStart!.isBefore(upto)) {
+        final curFrozen = upto.difference(s.pauseStart!).inMinutes;
+        if (curFrozen > 0) frozen += curFrozen;
+      }
+      final consumed = totalSinceStart - frozen;
+      return consumed < 0 ? 0 : consumed;
+    }
+
+    // استهلاك حتى نهاية اليوم (أو الآن إذا قبل نهاية اليوم)
+    final upto = dayEnd.isBefore(now) ? dayEnd : now;
+    final consumedToEnd = consumedUntil(upto);
+    final consumedToStart = consumedUntil(dayStart);
+
+    final overlap = consumedToEnd - consumedToStart;
+    return overlap < 0 ? 0 : overlap;
+  }
+
+  int getSessionMinutesSub(Session s) {
+    final now = DateTime.now();
+    if (s.type == 'حر') {
+      int base = s.elapsedMinutesPayg;
+      if (!s.isActive) return base;
+      if (s.isPaused) return base;
+      final since = s.runningSince ?? s.start;
+      return base + now.difference(since).inMinutes;
+    } else {
+      int base = s.elapsedMinutes;
+      if (!s.isActive) return base;
+      if (s.isPaused) return base;
+      final since = s.runningSince ?? s.start;
+      return base + now.difference(since).inMinutes;
+    }
+  }
+
+  int _getMinutesConsumedTodaySub(Session s, DateTime now) {
+    if (s.type == 'حر') return 0;
+
+    final dayStart = DateTime(now.year, now.month, now.day);
+
+    DateTime lastCheckpoint;
+    if (s.lastDailySpentCheckpoint == null ||
+        s.lastDailySpentCheckpoint!.isBefore(dayStart)) {
+      lastCheckpoint = s.runningSince ?? s.start;
+      if (lastCheckpoint.isBefore(dayStart)) lastCheckpoint = dayStart;
+      s.savedDailySpent = 0; // إعادة ضبط الحد اليومي
+    } else {
+      lastCheckpoint = s.lastDailySpentCheckpoint!;
+    }
+
+    int spentMinutes = now.difference(lastCheckpoint).inMinutes;
+    if (s.savedDailySpent != null) spentMinutes += s.savedDailySpent!;
+
+    s.savedDailySpent = spentMinutes;
+    s.lastDailySpentCheckpoint = now;
+
+    return spentMinutes;
+  }
+
+  DateTime? _getSubscriptionEndSub(Session s) {
+    final plan = s.subscription;
+    if (plan == null || plan.isUnlimited)
+      return s.end; // لو محفوظ end، أظهرها، وإلا null
+
+    // احسب النهاية الأساسية من بداية الاشتراك
+    final start = s.start;
+    DateTime end;
+    switch (plan.durationType) {
+      case "hour":
+        end = start.add(Duration(hours: plan.durationValue ?? 0));
+        break;
+      case "day":
+        end = start.add(Duration(days: plan.durationValue ?? 0));
+        break;
+      case "week":
+        end = start.add(Duration(days: 7 * (plan.durationValue ?? 0)));
+        break;
+      case "month":
+        end = DateTime(
+          start.year,
+          start.month + (plan.durationValue ?? 0),
+          start.day,
+          start.hour,
+          start.minute,
+        );
+        break;
+      default:
+        return s.end;
+    }
+
+    // ضف التجميد المتراكم
+    if (s.frozenMinutes > 0) {
+      end = end.add(Duration(minutes: s.frozenMinutes));
+    }
+
+    // اذا الجلسة موقوفة حاليا - اضف زمن التجميد الحالى (حتى يظهر الوقت متوقف أثناء العرض)
+    if (s.isPaused && s.pauseStart != null) {
+      final now = DateTime.now();
+      final currentFrozen = now.difference(s.pauseStart!).inMinutes;
+      if (currentFrozen > 0) end = end.add(Duration(minutes: currentFrozen));
+    }
+
+    // إذا كان بحقل s.end قيمة محفوظة (مثلاً اذا خزنتها عند الإنشاء) فاستخدمها بدل ذلك
+    if (s.end != null) {
+      // end في السجل يمكن أن يكون أدرجتَه سابقاً — لكن حافظ على إضافة frozen لنفس السلوك
+      var stored = s.end!;
+      // ضمان أن stored يساوي أو أكبر من الحساب (أو اختر سياسة أخرى)
+      if (stored.isBefore(end)) stored = end;
+      return stored;
+    }
+
+    return end;
+  }
+
+  Future<void> convertSubscriptionToPayg_CreateNew(Session sub) async {
+    final now = DateTime.now();
+    final spentToday = _minutesOverlapWithDateSub(sub, now);
+    final totalMinutes = getSessionMinutesSub(sub);
+
+    sub.savedDailySpent = spentToday;
+    sub.savedElapsedMinutes = totalMinutes;
+
+    // حفظ snapshot لو مش محفوظ
+    if (sub.savedSubscriptionJson == null && sub.subscription != null) {
+      sub.savedSubscriptionJson = jsonEncode(sub.subscription!.toJson());
+      sub.savedSubscriptionEnd = _getSubscriptionEndSub(sub);
+      sub.savedSubscriptionConvertedAt = now;
+      sub.addEvent('snapshot_saved_before_conversion');
+      await SessionDb.updateSession(sub);
+      debugPrint("💾 Snapshot saved for ${sub.name} at $now");
+    }
+
+    // أفضل: اجعل الجلسة الأصلية "مؤرشفة" (stop) - لا تمسحها
+    sub.isActive = false;
+    sub.isPaused = true;
+    // لو عايز تبيّن أنها محولة، ممكن تضيف event أو flag
+    sub.addEvent('subscription_archived_before_payg');
+    await SessionDb.updateSession(sub);
+
+    // أنشئ جلسة حر جديدة منفصلة (مرتبطة بالأصل)
+    final payg = Session(
+      id: generateId(),
+      name: '${sub.name} (حر)',
+      start: now,
+      end: null,
+      amountPaid: 0.0,
+      subscription: null,
+      isActive: true,
+      isPaused: false,
+      elapsedMinutes:
+          0, // لن نستخدم هذا للحساب — استخدم elapsedMinutesPayg أو runningSince
+      elapsedMinutesPayg: 0,
+      frozenMinutes: 0,
+      cart: [], // أو انسخ الكارت لو تريد
+      type: 'حر',
+      pauseStart: null,
+      paidMinutes: 0,
+      customerId: sub.customerId,
+      events: [
+        {
+          'ts': now.toIso8601String(),
+          'action': 'created_from_subscription',
+          'meta': {'from': sub.id},
+        },
+      ],
+      runningSince: now,
+      originalSubscriptionId: sub.id,
+    );
+
+    await SessionDb.insertSession(payg);
+
+    // حدث الواجهة: أعادة تحميل الجلسات
+    await _loadSessionsSub();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تم إنشاء جلسة حر جديدة من الباقة')),
+      );
+    }
+  }
+
+  ///
   DateTime? getSubscriptionEnd(Session s) {
     final plan = s.subscription;
     if (plan == null || plan.isUnlimited) return null;
@@ -92,28 +362,55 @@ class _CashierScreenState extends State<CashierScreen> {
     }
   }
 
+  void applySearch(String query) {
+    setState(() {
+      if (query.isEmpty) {
+        _filteredSessions = _sessionsSub;
+      } else {
+        _filteredSessions =
+            _sessionsSub
+                .where(
+                  (s) => s.name.toLowerCase().contains(query.toLowerCase()),
+                )
+                .toList();
+      }
+    });
+  }
+
+  Timer? _badgeTimer;
+  Timer? _drawerBalanc;
   Customer? _currentCustomer;
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 3, vsync: this); // عدّد التابات
     _loadCurrentShift();
     _currentCustomer = AdminDataService.instance.customers.firstWhereOrNull(
       (c) => c.name == _currentCustomerName,
     );
     if (mounted) {
       setState(() {});
-      _loadDrawerBalance(); // نحافظ على تحديث الرصيد دوريًا
+      _drawerBalanc = Timer.periodic(Duration(seconds: 3), (_) {
+        _loadDrawerBalance();
+      }); // نحافظ على تحديث الرصيد دوريًا
     }
+    _searchCtrl.addListener(() {
+      applySearch(_searchCtrl.text);
+    });
     _startAutoStopChecker();
     _updateUnseenExpiringCount();
     _loadSessions();
     _timer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
     });
+    _badgeTimer = Timer.periodic(Duration(seconds: 1), (_) {
+      _updateExpiringFlags();
+    });
   }
 
   @override
   void dispose() {
+    _badgeTimer?.cancel();
     _timer?.cancel();
     _autoStopTimer?.cancel();
     _discountCodeCtrl.dispose();
@@ -122,14 +419,62 @@ class _CashierScreenState extends State<CashierScreen> {
 
   Future<void> _loadSessions() async {
     final data = await SessionDb.getSessions();
+
     for (var s in data) {
-      s.cart = await CartDb.getCartBySession(s.id);
+      try {
+        s.cart = await CartDb.getCartBySession(s.id);
+      } catch (_) {}
     }
+
+    // دمج أو إزالة التكرارات هنا قبل setState
+    final uniqueSessions = <String, Session>{};
+    for (var s in data) {
+      final key = s.originalSubscriptionId ?? s.id; // إذا PayG مرتبط بالأصل
+      if (!uniqueSessions.containsKey(key)) {
+        uniqueSessions[key] = s;
+      } else {
+        // هنا ممكن تظهر دايلوج للمستخدم
+        debugPrint("⚠️ Duplicate session found: ${s.name}");
+        // إذا عايز تمنع ظهور الجلسة خالص، تجاهلها:
+        // continue;
+      }
+    }
+
     setState(() {
-      _sessions = data;
-      _filteredSessions = data;
+      _sessions = uniqueSessions.values.toList();
+      _filteredSessions = _sessions;
     });
   }
+
+  Future<void> _loadSessions2() async {
+    final data = await SessionDb.getSessions();
+
+    setState(() {
+      _tabController.animateTo(1);
+      _filteredSessions = _sessions;
+    });
+  }
+
+  /*
+  Future<void> _loadSessions() async {
+    final data = await SessionDb.getSessions();
+
+    // جلب الكارت لكل جلسة
+    for (var s in data) {
+      try {
+        s.cart = await CartDb.getCartBySession(s.id);
+      } catch (_) {}
+    }
+
+    setState(() {
+      // حدث المتغيرات أولاً
+      _sessions = data;
+      _filteredSessions = List.from(data);
+    });
+
+    _handleDuplicateSessions();
+  }
+*/
 
   int getSessionMinutes(Session s) {
     // invariant:
@@ -248,7 +593,7 @@ class _CashierScreenState extends State<CashierScreen> {
     return newCustomer;
   }
 
-  // الدالة المحسنة _startSession
+  /*  // الدالة المحسنة _startSession
   void _startSession() async {
     final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
@@ -413,7 +758,7 @@ $dailyLimitInfo
 """);
 
         // ممكن تعرضها كـ Dialog بدل الطباعة:
-        /*     await showDialog(
+        */ /*     await showDialog(
           context: context,
           builder:
               (_) => AlertDialog(
@@ -433,7 +778,9 @@ $dailyLimitInfo
                   ),
                 ],
               ),
-        );*/
+        );*/ /*
+
+        _subsKey.currentState?.reloadData();
 
         // 🔻 باقي الكود كما هو
         if (_appliedDiscount?.singleUse == true) {
@@ -476,6 +823,162 @@ $dailyLimitInfo
                 )
                 .toList();
       }
+
+      _nameCtrl.clear();
+      _phoneCtrl.clear();
+      _selectedPlan = null;
+      _appliedDiscount = null;
+      _discountCodeCtrl.clear();
+    });
+  }*/
+
+  void _startSession() async {
+    final name = _nameCtrl.text.trim();
+    final phone = _phoneCtrl.text.trim();
+
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('رجاءً ضع اسم العميل')));
+      return;
+    }
+
+    // تأكد/انشئ العميل
+    Customer? customer;
+    try {
+      customer = await _getOrCreateCustomer(name, phone.isEmpty ? null : phone);
+      _currentCustomer = customer;
+    } catch (e, st) {
+      debugPrint('Failed to get/create customer: $e\n$st');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'فشل حفظ بيانات العميل، سيتم متابعة الجلسة بدون ربط عميل.',
+          ),
+        ),
+      );
+      customer = null;
+      _currentCustomer = null;
+    }
+
+    final now = DateTime.now();
+    DateTime? end;
+    SubscriptionPlan? currentPlan = _selectedPlan;
+
+    if (currentPlan != null && !currentPlan.isUnlimited) {
+      switch (currentPlan.durationType) {
+        case "hour":
+          end = now.add(Duration(hours: currentPlan.durationValue ?? 0));
+          break;
+        case "day":
+          end = now.add(Duration(days: currentPlan.durationValue ?? 0));
+          break;
+        case "week":
+          end = now.add(Duration(days: 7 * (currentPlan.durationValue ?? 0)));
+          break;
+        case "month":
+          end = DateTime(
+            now.year,
+            now.month + (currentPlan.durationValue ?? 0),
+            now.day,
+            now.hour,
+            now.minute,
+          );
+          break;
+      }
+    }
+
+    final session = Session(
+      id: generateId(),
+      name: name,
+      start: now,
+      end: end,
+      subscription: currentPlan,
+      isActive: true,
+      isPaused: false,
+      elapsedMinutes: 0,
+      cart: [],
+      amountPaid: 0.0,
+      type: currentPlan != null ? "باقة" : "حر",
+      savedDailySpent: 0,
+      lastDailySpentCheckpoint: now,
+    );
+
+    // الدفع للباقة إذا موجودة
+    if (currentPlan != null && customer != null) {
+      final basePrice = currentPlan.price;
+      final discountPercent = _appliedDiscount?.percent ?? 0.0;
+      final finalPrice = basePrice - (basePrice * discountPercent / 100);
+
+      final paid = await showSubscriptionPaymentDialog(
+        context,
+        customer: customer,
+        currentPlan: currentPlan,
+        basePrice: basePrice,
+        discountPercent: discountPercent,
+      );
+
+      if (paid != true) return; // إذا ألغي المستخدم الدفع
+
+      session.amountPaid = finalPrice;
+
+      final sale = Sale(
+        id: generateId(),
+        description:
+            'اشتراك ${currentPlan.name} للعميل ${name}' +
+            (_appliedDiscount != null
+                ? " (خصم ${_appliedDiscount!.percent}%)"
+                : ""),
+        amount: finalPrice,
+      );
+
+      try {
+        await AdminDataService.instance.addSale(
+          sale,
+          paymentMethod: 'cash',
+          customer: customer,
+          updateDrawer: true,
+        );
+
+        // إزالة خصم single-use بعد استخدامه
+        if (_appliedDiscount?.singleUse == true) {
+          AdminDataService.instance.discounts.removeWhere(
+            (d) => d.id == _appliedDiscount!.id,
+          );
+          _appliedDiscount = null;
+        }
+
+        await _loadDrawerBalance();
+      } catch (e, st) {
+        debugPrint('Failed to process quick sale: $e\n$st');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('فشل تسجيل الدفعة — حاول مرة أخرى')),
+        );
+        return; // توقف إذا فشل الدفع
+      }
+    }
+
+    // حفظ الجلسة في DB
+    await SessionDb.insertSession(session);
+
+    // تحديث AdminSubscribersPagee مباشرة بدون reload كامل
+    _subsKey.currentState?.setState(() {
+      _sessions.insert(0, session);
+    });
+
+    // تحديث الواجهة الحالية
+    setState(() {
+      _sessions.insert(0, session);
+      _filteredSessions =
+          _searchCtrl.text.isEmpty
+              ? _sessions
+              : _sessions
+                  .where(
+                    (s) => s.name.toLowerCase().contains(
+                      _searchCtrl.text.toLowerCase(),
+                    ),
+                  )
+                  .toList();
 
       _nameCtrl.clear();
       _phoneCtrl.clear();
@@ -615,293 +1118,6 @@ $dailyLimitInfo
     }
   }
 
-  /*  Widget _buildAddProductsAndPay(Session s) {
-    Product? selectedProduct;
-    TextEditingController qtyCtrl = TextEditingController(text: '1');
-
-    return StatefulBuilder(
-      builder: (context, setSheetState) {
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButton<Product>(
-                value: selectedProduct,
-                hint: const Text('اختر منتج/مشروب'),
-                isExpanded: true,
-                items:
-                    AdminDataService.instance.products.map((p) {
-                      return DropdownMenuItem(
-                        value: p,
-                        child: Text('${p.name} (${p.price} ج)'),
-                      );
-                    }).toList(),
-                onChanged: (val) {
-                  setSheetState(() => selectedProduct = val);
-                },
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: qtyCtrl,
-                      decoration: const InputDecoration(labelText: 'عدد'),
-                      keyboardType: TextInputType.number,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: () async {
-                      final qty = int.tryParse(qtyCtrl.text) ?? 1;
-                      if (selectedProduct != null) {
-                        final item = CartItem(
-                          id: generateId(),
-                          product: selectedProduct!,
-                          qty: qty,
-                        );
-
-                        await CartDb.insertCartItem(item, s.id);
-
-                        final updatedCart = await CartDb.getCartBySession(s.id);
-                        setSheetState(() => s.cart = updatedCart);
-                      }
-                    },
-                    child: const Text('اضف'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              ...s.cart.map((item) {
-                final qtyController = TextEditingController(
-                  text: item.qty.toString(),
-                );
-                return Row(
-                  children: [
-                    Expanded(child: Text(item.product.name)),
-                    SizedBox(
-                      width: 50,
-                      child: TextField(
-                        controller: qtyController,
-                        keyboardType: TextInputType.number,
-                        onChanged: (val) async {
-                          item.qty = int.tryParse(val) ?? item.qty;
-                          await CartDb.updateCartItemQty(item.id, item.qty);
-                          setSheetState(() {});
-                        },
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () async {
-                        await CartDb.deleteCartItem(item.id);
-                        s.cart.remove(item);
-                        setSheetState(() {});
-                      },
-                    ),
-                  ],
-                );
-              }).toList(),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _completeAndPayForSession(s);
-                },
-                child: const Text('إتمام ودفع'),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }*/
-  Widget _buildAddProductsAndPay(Session s) {
-    Product? selectedProduct;
-    TextEditingController qtyCtrl = TextEditingController(text: '1');
-
-    return StatefulBuilder(
-      builder: (context, setSheetState) {
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Dropdown لاختيار المنتج
-              DropdownButtonFormField<Product>(
-                value: selectedProduct,
-                hint: const Text(
-                  'اختر منتج/مشروب',
-                  style: TextStyle(color: Colors.white70),
-                ),
-                dropdownColor: Colors.grey[850],
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: Colors.grey[800],
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 14,
-                  ),
-                ),
-                items:
-                    AdminDataService.instance.products.map((p) {
-                      return DropdownMenuItem(
-                        value: p,
-                        child: Text(
-                          '${p.name} (${p.price} ج)',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      );
-                    }).toList(),
-                onChanged: (val) {
-                  setSheetState(() => selectedProduct = val);
-                },
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: qtyCtrl,
-                      style: const TextStyle(color: Colors.white),
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        labelText: 'عدد',
-                        labelStyle: const TextStyle(color: Colors.white70),
-                        filled: true,
-                        fillColor: Colors.grey[800],
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide.none,
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 14,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: () async {
-                      final qty = int.tryParse(qtyCtrl.text) ?? 1;
-                      if (selectedProduct != null) {
-                        final item = CartItem(
-                          id: generateId(),
-                          product: selectedProduct!,
-                          qty: qty,
-                        );
-
-                        await CartDb.insertCartItem(item, s.id);
-
-                        final updatedCart = await CartDb.getCartBySession(s.id);
-                        setSheetState(() => s.cart = updatedCart);
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blueAccent,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 14,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: const Text(
-                      'اضف',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              // قائمة العناصر المضافة
-              ...s.cart.map((item) {
-                final qtyController = TextEditingController(
-                  text: item.qty.toString(),
-                );
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          item.product.name,
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 60,
-                        child: TextField(
-                          controller: qtyController,
-                          style: const TextStyle(color: Colors.white),
-                          keyboardType: TextInputType.number,
-                          onChanged: (val) async {
-                            item.qty = int.tryParse(val) ?? item.qty;
-                            await CartDb.updateCartItemQty(item.id, item.qty);
-                            setSheetState(() {});
-                          },
-                          decoration: InputDecoration(
-                            filled: true,
-                            fillColor: Colors.grey[800],
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 10,
-                            ),
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.redAccent),
-                        onPressed: () async {
-                          await CartDb.deleteCartItem(item.id);
-                          s.cart.remove(item);
-                          setSheetState(() {});
-                        },
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
-              const SizedBox(height: 12),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _completeAndPayForSession(s);
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.greenAccent.shade700,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 16,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                child: const Text(
-                  'إتمام ودفع',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   void _completeAndPayForSession(Session s) async {
     final totalMinutes = getSessionMinutes(s);
 
@@ -978,6 +1194,406 @@ $dailyLimitInfo
     return plan.dailyUsageHours! * 60; // تحويل ساعات إلى دقائق
   }
 
+  /*Widget _buildAddProductsAndPay(Session s) {
+    Product? selectedProduct;
+    TextEditingController qtyCtrl = TextEditingController(text: '1');
+
+    return StatefulBuilder(
+      builder: (context, setSheetState) {
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Dropdown لاختيار المنتج
+              DropdownButtonFormField<Product>(
+                value: selectedProduct,
+                hint: const Text(
+                  'اختر منتج/مشروب',
+                  style: TextStyle(color: Colors.white70),
+                ),
+                dropdownColor: Colors.grey[850],
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: AppColorsDark.bgCardColor,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 14,
+                  ),
+                ),
+                items:
+                    AdminDataService.instance.products.map((p) {
+                      return DropdownMenuItem(
+                        value: p,
+                        child: Text(
+                          '${p.name} (${p.price} ج)',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      );
+                    }).toList(),
+                onChanged: (val) {
+                  setSheetState(() => selectedProduct = val);
+                },
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: CustomFormField(hint: "عدد", controller: qtyCtrl),
+                  ),
+                  const SizedBox(width: 8),
+
+                  CustomButton(
+                    text: "اضف",
+                    onPressed: () async {
+                      final qty = int.tryParse(_qtyCtrl.text) ?? 1;
+                      if (_selectedProduct != null) {
+                        sellProduct(_selectedProduct!, qty);
+                      }
+                      if (selectedProduct != null) {
+                        await sellProduct(selectedProduct!, qty); // خصم المخزون
+
+                        final item = CartItem(
+                          id: generateId(),
+                          product: selectedProduct!,
+                          qty: qty,
+                        );
+
+                        await CartDb.insertCartItem(item, s.id);
+
+                        final updatedCart = await CartDb.getCartBySession(s.id);
+                        setSheetState(() => s.cart = updatedCart);
+                      }
+                    },
+                    infinity: false,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // قائمة العناصر المضافة
+              ...s.cart.map((item) {
+                final qtyController = TextEditingController(
+                  text: item.qty.toString(),
+                );
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.product.name,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 60,
+                        child: TextField(
+                          controller: qtyController,
+                          style: const TextStyle(color: Colors.white),
+                          keyboardType: TextInputType.number,
+                          onChanged: (val) async {
+                            item.qty = int.tryParse(val) ?? item.qty;
+                            await CartDb.updateCartItemQty(item.id, item.qty);
+                            setSheetState(() {});
+                          },
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: Colors.grey[800],
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 10,
+                            ),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.redAccent),
+                        onPressed: () async {
+                          await CartDb.deleteCartItem(item.id);
+                          // إعادة الكمية للمخزون
+                          item.product.stock += item.qty;
+                          final idx = AdminDataService.instance.products
+                              .indexWhere((p) => p.id == item.product.id);
+                          if (idx != -1) {
+                            AdminDataService.instance.products[idx].stock =
+                                item.product.stock;
+                          }
+
+                          s.cart.remove(item);
+                          setSheetState(() {});
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+              const SizedBox(height: 12),
+
+              CustomButton(
+                text: "إتمام ودفع",
+                onPressed: () async {
+                  Navigator.pop(context);
+                  final qty = int.tryParse(qtyCtrl.text) ?? 1;
+                  if (selectedProduct != null) {
+                    await tryAddToCart(s, selectedProduct!, qty, setSheetState);
+                  }
+
+                  _completeAndPayForSession(s);
+                },
+                infinity: false,
+                color: Colors.green,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }*/
+  Widget _buildAddProductsAndPay(Session s) {
+    Product? selectedProduct;
+    TextEditingController qtyCtrl = TextEditingController(text: '1');
+
+    return StatefulBuilder(
+      builder: (context, setSheetState) {
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Dropdown لاختيار المنتج
+              DropdownButtonFormField<Product>(
+                value: selectedProduct,
+                hint: const Text(
+                  'اختر منتج/مشروب',
+                  style: TextStyle(color: Colors.white70),
+                ),
+                dropdownColor: Colors.grey[850],
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: AppColorsDark.bgCardColor,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 14,
+                  ),
+                ),
+                items:
+                    AdminDataService.instance.products.map((p) {
+                      return DropdownMenuItem(
+                        value: p,
+                        child: Text(
+                          '${p.name} (${p.price} ج - ${p.stock} متاح)',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      );
+                    }).toList(),
+                onChanged: (val) {
+                  setSheetState(() => selectedProduct = val);
+                },
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: CustomFormField(hint: "عدد", controller: qtyCtrl),
+                  ),
+                  const SizedBox(width: 8),
+                  CustomButton(
+                    text: "اضف",
+                    onPressed: () async {
+                      if (selectedProduct == null) return;
+
+                      final qty = int.tryParse(qtyCtrl.text) ?? 1;
+                      if (qty <= 0) return;
+
+                      // تحقق من المخزون
+                      if (selectedProduct!.stock < qty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              '⚠️ المخزون غير كافي (${selectedProduct!.stock} فقط)',
+                            ),
+                          ),
+                        );
+                        return;
+                      }
+
+                      // خصم المخزون مؤقتًا
+                      /*    selectedProduct!.stock -= qty;
+                      final index = AdminDataService.instance.products
+                          .indexWhere((p) => p.id == selectedProduct!.id);
+                      if (index != -1)
+                        AdminDataService.instance.products[index].stock =
+                            selectedProduct!.stock;*/
+
+                      // إضافة للكارت
+                      final item = CartItem(
+                        id: generateId(),
+                        product: selectedProduct!,
+                        qty: qty,
+                      );
+                      await CartDb.insertCartItem(item, s.id);
+
+                      final updatedCart = await CartDb.getCartBySession(s.id);
+                      setSheetState(() => s.cart = updatedCart);
+                    },
+                    infinity: false,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // قائمة العناصر المضافة
+              ...s.cart.map((item) {
+                final qtyController = TextEditingController(
+                  text: item.qty.toString(),
+                );
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.product.name,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 60,
+                        child: TextField(
+                          controller: qtyController,
+                          style: const TextStyle(color: Colors.white),
+                          keyboardType: TextInputType.number,
+                          onChanged: (val) async {
+                            final newQty = int.tryParse(val) ?? item.qty;
+
+                            // تحقق من المخزون عند تعديل الكمية
+                            final availableStock =
+                                item.product.stock + item.qty;
+                            if (newQty > availableStock) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    '⚠️ المخزون غير كافي (${availableStock} فقط)',
+                                  ),
+                                ),
+                              );
+                              setSheetState(() {});
+                              return;
+                            }
+
+                            // تعديل المخزون
+                            item.product.stock += (item.qty - newQty);
+                            final idx = AdminDataService.instance.products
+                                .indexWhere((p) => p.id == item.product.id);
+                            if (idx != -1)
+                              AdminDataService.instance.products[idx].stock =
+                                  item.product.stock;
+
+                            item.qty = newQty;
+                            await CartDb.updateCartItemQty(item.id, newQty);
+                            setSheetState(() {});
+                          },
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: Colors.grey[800],
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 10,
+                            ),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.redAccent),
+                        onPressed: () async {
+                          await CartDb.deleteCartItem(item.id);
+
+                          // إعادة الكمية للمخزون
+                          item.product.stock += item.qty;
+                          final idx = AdminDataService.instance.products
+                              .indexWhere((p) => p.id == item.product.id);
+                          if (idx != -1)
+                            AdminDataService.instance.products[idx].stock =
+                                item.product.stock;
+
+                          s.cart.remove(item);
+                          setSheetState(() {});
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+              const SizedBox(height: 12),
+              CustomButton(
+                text: "إتمام ودفع",
+                onPressed: () async {
+                  Navigator.pop(context);
+
+                  for (var item in s.cart) {
+                    await sellProduct(item.product, item.qty);
+                  }
+                  _completeAndPayForSession(s);
+                },
+                infinity: false,
+                color: Colors.green,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> tryAddToCart(
+    Session s,
+    Product product,
+    int qty,
+    StateSetter setSheetState,
+  ) async {
+    if (qty <= 0) return;
+
+    // تحقق من المخزون
+    if (product.stock < qty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('⚠️ المخزون غير كافي (${product.stock} فقط)')),
+      );
+      return;
+    }
+
+    // خصم المخزون مؤقتًا
+    product.stock -= qty;
+    final index = AdminDataService.instance.products.indexWhere(
+      (p) => p.id == product.id,
+    );
+    if (index != -1)
+      AdminDataService.instance.products[index].stock = product.stock;
+
+    // أضف للـ Cart
+    final item = CartItem(id: generateId(), product: product, qty: qty);
+
+    await CartDb.insertCartItem(item, s.id);
+    final updatedCart = await CartDb.getCartBySession(s.id);
+    setSheetState(() => s.cart = updatedCart);
+  }
+
   Future<void> _showReceiptDialog(
     Session s,
     double timeCharge,
@@ -1003,11 +1619,10 @@ $dailyLimitInfo
         return StatefulBuilder(
           builder: (context, setDialogState) {
             double finalTotal = timeCharge + productsTotal - discountValue;
-
+            /*  (الرصيد: ${AdminDataService.instance.customerBalances.firstWhere((b) => b.customerId == s.customerId, orElse: () => CustomerBalance(customerId: s.customerId ?? '', balance: 0.0)).balance.toStringAsFixed(2)} ج)*/
             return AlertDialog(
-              title: Text(
-                'إيصال الدفع - ${s.name} (الرصيد: ${customerBalance.toStringAsFixed(2)} ج)',
-              ),
+              title: Text('إيصال الدفع - ${s.name} '),
+
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1019,29 +1634,6 @@ $dailyLimitInfo
                       (item) => Text(
                         '${item.product.name} x${item.qty} = ${item.total} ج',
                       ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // طريقة الدفع
-                    Row(
-                      children: [
-                        const Text("طريقة الدفع: "),
-                        const SizedBox(width: 8),
-                        DropdownButton<String>(
-                          value: paymentMethod,
-                          items: const [
-                            DropdownMenuItem(value: "cash", child: Text("كاش")),
-                            DropdownMenuItem(
-                              value: "wallet",
-                              child: Text("محفظة"),
-                            ),
-                          ],
-                          onChanged: (val) {
-                            if (val != null)
-                              setDialogState(() => paymentMethod = val);
-                          },
-                        ),
-                      ],
                     ),
 
                     const SizedBox(height: 12),
@@ -1452,39 +2044,220 @@ $dailyLimitInfo
     await _loadCurrentShift();
   }
 
-  int get badgeCount =>
-      getExpiringSessions().length + getExpiredSessions().length;
+  /*  int _updateExpiringFlags() {
+    final now = DateTime.now();
+    int newCount = 0;
+
+    for (var s in _sessions) {
+      bool newExpired = s.end != null && now.isAfter(s.end!);
+      bool newExpiring =
+          s.end != null &&
+          now.isBefore(s.end!) &&
+          s.end!.difference(now).inMinutes <= 50;
+      bool newDaily =
+          s.subscription != null &&
+          s.subscription!.dailyUsageType == 'limited' &&
+          _minutesOverlapWithDateSub(s, now) >=
+              (s.subscription!.dailyUsageHours! * 60);
+
+      // ⛔️ انتهت الباقة
+      if (newExpired && !s.expiredNotified && !s.shownExpired) {
+        s.expiredNotified = true;
+        newCount++;
+
+        NotificationsDb.insertNotification(
+          NotificationItem(
+            sessionId: s.id,
+            type: "expired",
+            message: "الباقة ${s.name} انتهت",
+          ),
+        );
+      }
+
+      // ⏳ قربت تنتهي
+      if (newExpiring && !s.expiringNotified && !s.shownExpiring) {
+        s.expiringNotified = true;
+        newCount++;
+
+        NotificationsDb.insertNotification(
+          NotificationItem(
+            sessionId: s.id,
+            type: "expiring",
+            message: "الباقة ${s.name} هتنتهي بعد ساعة",
+          ),
+        );
+      }
+
+      // ⚠️ الحد اليومي
+      if (newDaily && !s.dailyLimitNotified && !s.shownDailyLimit) {
+        s.dailyLimitNotified = true;
+        newCount++;
+
+        NotificationsDb.insertNotification(
+          NotificationItem(
+            sessionId: s.id,
+            type: "dailyLimit",
+            message: "الباقة ${s.name} وصلت الحد اليومي",
+          ),
+        );
+      }
+    }
+
+    if (newCount > 0) setState(() {});
+    return newCount;
+  }*/
+
+  int _updateExpiringFlags() {
+    final now = DateTime.now();
+    int newCount = 0;
+
+    for (var s in _sessions) {
+      bool newExpired = s.end != null && now.isAfter(s.end!);
+      bool newExpiring =
+          s.end != null &&
+          now.isBefore(s.end!) &&
+          s.end!.difference(now).inMinutes <= 50;
+      bool newDaily =
+          s.subscription != null &&
+          s.subscription!.dailyUsageType == 'limited' &&
+          _minutesOverlapWithDateSub(s, now) >=
+              (s.subscription!.dailyUsageHours! * 60);
+
+      // ⚠️ هنا الفرق: ما نحدّثش إلا لو الشرط اتحقق لأول مرة
+      if (newExpired && !s.expiredNotified && !s.shownExpired) {
+        s.expiredNotified = true;
+        newCount++;
+      }
+      if (newExpiring && !s.expiringNotified && !s.shownExpiring) {
+        s.expiringNotified = true;
+        newCount++;
+      }
+      if (newDaily && !s.dailyLimitNotified && !s.shownDailyLimit) {
+        s.dailyLimitNotified = true;
+        newCount++;
+      }
+    }
+
+    if (newCount > 0) setState(() {});
+    return newCount;
+  }
+
+  // int get badgeCount {
+  //   final now = DateTime.now();
+  //   int count = 0;
+  //
+  //   for (var s in _sessions) {
+  //     if (s.subscription == null) continue;
+  //
+  //     // الاشتراك انتهى
+  //     if (s.end != null && now.isAfter(s.end!)) {
+  //       count++;
+  //       continue;
+  //     }
+  //
+  //     // قرب الانتهاء
+  //     if (s.end != null && now.isBefore(s.end!)) {
+  //       final remaining = s.end!.difference(now);
+  //       if (remaining.inMinutes <= 50) {
+  //         count++;
+  //       }
+  //     }
+  //
+  //     // الحد اليومي
+  //     final plan = s.subscription!;
+  //     if (plan.dailyUsageType == 'limited' && plan.dailyUsageHours != null) {
+  //       final spentToday = _minutesOverlapWithDateSub(s, now);
+  //       final allowedToday = plan.dailyUsageHours! * 60;
+  //       if (spentToday >= allowedToday) {
+  //         count++;
+  //       }
+  //     }
+  //   }
+  //
+  //   return count;
+  // }
+
+  int get badgeCount {
+    int count = 0;
+    for (var s in _sessions) {
+      if (s.expiredNotified && !s.shownExpired) count++;
+      if (s.expiringNotified && !s.shownExpiring) count++;
+      if (s.dailyLimitNotified && !s.shownDailyLimit) count++;
+    }
+    return count;
+  }
+
+  /*Future<int> get badgeCount async {
+    final db = await DbHelper.instance.database;
+    final res = await db.query('notifications', where: 'isRead = 0');
+    return res.length;
+  }
+
+  Future<int> getBadgeCount() async {
+    final db = await DbHelper.instance.database;
+    final res = await db.query('notifications', where: 'isRead = 0');
+    return res.length;
+  }*/
+  Future<void> sellProduct(Product product, int qty) async {
+    if (qty <= 0) return;
+
+    // 1️⃣ خصم من الـ DB
+    final newStock = max(0, product.stock - qty);
+    product.stock = newStock;
+    await ProductDb.insertProduct(product); // تحديث المخزون في DB
+
+    // 2️⃣ خصم من AdminDataService
+    final index = AdminDataService.instance.products.indexWhere(
+      (p) => p.id == product.id,
+    );
+    if (index != -1) {
+      AdminDataService.instance.products[index].stock = newStock;
+    }
+
+    setState(() {}); // تحديث الـ UI
+  }
+
+  // داخل _CashierScreenState
+  void _convertToPayg() async {
+    if (mounted) {
+      setState(() {
+        _loadSessions2(); // أو أي دالة تحدث التاب
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isShiftOpen = _currentShiftId != null;
 
     return DefaultTabController(
-      length: 4,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('الكاشير'),
+          title: Center(
+            child: const Text(
+              'الكاشير',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 28),
+            ),
+          ),
 
           backgroundColor: Colors.transparent,
           elevation: 0,
           actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'تحديث الجلسات',
-              onPressed: () {
-                _loadSessions();
-                _loadDrawerBalance(); // دالة تحميل الجلسات
-                if (mounted) setState(() {}); // حدث الـ UI بعد التحديث
-              },
-            ),
             // داخل AppBar.actions: ضع هذا قبل الأيقونات الأخرى أو بعدهم
             Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 const Text(
                   'رصيد الدرج',
-                  style: TextStyle(fontSize: 11, color: Colors.white70),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                 ),
+                SizedBox(height: 8),
                 Text(
                   '${_drawerBalance.toStringAsFixed(2)} ج',
                   style: const TextStyle(
@@ -1497,131 +2270,9 @@ $dailyLimitInfo
             ),
 
             IconButton(
-              icon: Icon(isShiftOpen ? Icons.lock_clock : Icons.play_arrow),
+              icon: Icon(isShiftOpen ? Icons.lock_clock : Icons.lock_person),
               tooltip: isShiftOpen ? 'تقفيل الشيفت' : 'فتح شيفت',
               onPressed: isShiftOpen ? _closeCurrentShift : _openShift,
-            ),
-
-            IconButton(
-              icon: const Icon(Icons.add_shopping_cart),
-              tooltip: 'إضافة منتجات بدون اسم',
-              /* onPressed: () async {
-                // ✅ هات كل المشتركين اللي عندهم باقات
-                final subscribers =
-                    _sessions
-                        .where((s) => s.subscription != null && s.isActive)
-                        .toList();
-
-                String? selectedName;
-
-                if (subscribers.isNotEmpty) {
-                  selectedName = await showDialog<String>(
-                    context: context,
-                    builder: (context) {
-                      return AlertDialog(
-                        title: const Text('اختر مشترك'),
-                        content: SizedBox(
-                          width: double.maxFinite,
-                          child: ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: subscribers.length,
-                            itemBuilder: (context, i) {
-                              final sub = subscribers[i];
-                              return ListTile(
-                                title: Text(sub.name),
-                                subtitle: Text(
-                                  "باقة: ${sub.subscription?.name ?? ''}",
-                                ),
-                                onTap: () => Navigator.pop(context, sub.name),
-                              );
-                            },
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                }
-
-                // لو المستخدم ما اختارش حاجة → Cancel
-                if (selectedName == null) return;
-
-                final tempSession = Session(
-                  id: generateId(),
-                  name: selectedName, // الاسم من المشترك
-                  start: DateTime.now(),
-                  end: null,
-                  subscription: null,
-                  isActive: true,
-                  isPaused: false,
-                  elapsedMinutes: 0,
-                  cart: [],
-                  type: "حر", // 🔹 حددنا النوع
-                );
-
-                await showModalBottomSheet(
-                  context: context,
-                  builder: (_) => _buildAddProductsAndPay(tempSession),
-                );
-
-                if (tempSession.cart.isNotEmpty) {
-                  setState(() {
-                    _sessions.insert(0, tempSession);
-                    _filteredSessions = _sessions;
-                  });
-                }
-              },*/
-              onPressed: () async {
-                final subscribers =
-                    _sessions
-                        .where((s) => s.subscription != null && s.isActive)
-                        .toList();
-
-                Session? selectedSession;
-
-                if (subscribers.isNotEmpty) {
-                  selectedSession = await showDialog<Session>(
-                    context: context,
-                    builder: (context) {
-                      return AlertDialog(
-                        title: const Text('اختر مشترك'),
-                        content: SizedBox(
-                          width: double.maxFinite,
-                          child: ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: subscribers.length,
-                            itemBuilder: (context, i) {
-                              final sub = subscribers[i];
-                              return ListTile(
-                                title: Text(sub.name),
-                                subtitle: Text(
-                                  "باقة: ${sub.subscription?.name ?? ''}",
-                                ),
-                                onTap:
-                                    () => Navigator.pop(
-                                      context,
-                                      sub,
-                                    ), // ✅ رجع السيشن نفسه
-                              );
-                            },
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                }
-
-                // لو المستخدم ما اختارش → Cancel
-                if (selectedSession == null) return;
-
-                await showModalBottomSheet(
-                  context: context,
-                  builder: (_) => _buildAddProductsAndPay(selectedSession!),
-                );
-
-                setState(() {
-                  _filteredSessions = _sessions; // تحديث العرض بعد الإضافة
-                });
-              },
             ),
 
             Stack(
@@ -1629,45 +2280,141 @@ $dailyLimitInfo
                 IconButton(
                   icon: const Icon(Icons.notifications),
                   tooltip: 'الاشتراكات المنتهية والقريبة من الانتهاء',
-                  onPressed: () {
-                    final expiring = getExpiringSessions();
-                    final expired = getExpiredSessions();
+                  onPressed: () async {
+                    // تقدر تحدث الإشعارات هنا لو عايز
                     Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder:
                             (_) => ExpiringSessionsPage(
-                              allSessions: _sessions,
-                              // expiring: expiring,
-                              //  expired: expired,
+                              onViewed: () async {
+                                final db = await DbHelper.instance.database;
+                                await db.update('notifications', {
+                                  'isRead': 1,
+                                }, where: 'isRead = 0');
+                              },
+                              sessionsSub: _sessions,
                             ),
+                      ),
+                    ).then(
+                      (_) => setState(() {}),
+                    ); // عشان الـ badge يتحدث بعد الرجوع
+                  },
+                ),
+                Stack(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.notifications),
+                      tooltip: 'الاشتراكات المنتهية والقريبة من الانتهاء',
+                      onPressed: () {
+                        _updateExpiringFlags(); // ← تحديث قبل فتح الصفحة
+
+                        for (var s in _sessions) {
+                          if (s.subscription == null) continue;
+                          final now = DateTime.now();
+
+                          s.expiredNotified =
+                              (s.end != null && now.isAfter(s.end!));
+                          s.expiringNotified =
+                              (s.end != null &&
+                                  now.isBefore(s.end!) &&
+                                  s.end!.difference(now).inMinutes <= 50);
+                          s.dailyLimitNotified =
+                              (s.subscription!.dailyUsageType == 'limited' &&
+                                  _minutesOverlapWithDateSub(s, now) >=
+                                      (s.subscription!.dailyUsageHours! * 60));
+                        }
+
+                        setState(() {}); // ← لتحديث badgeCount قبل الانتقال
+
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder:
+                                (_) => ExpiringSessionsPage(
+                                  sessionsSub: _sessions,
+                                  onViewed: () {
+                                    for (var s in _sessions) {
+                                      if (s.expiredNotified)
+                                        s.shownExpired = true;
+                                      if (s.expiringNotified)
+                                        s.shownExpiring = true;
+                                      if (s.dailyLimitNotified)
+                                        s.shownDailyLimit = true;
+                                    }
+                                    setState(() {});
+                                  },
+                                ),
+                          ),
+                        ).then((_) {
+                          // تصفير الإشعارات بعد الرجوع
+                          for (var s in _sessions) {
+                            if (s.expiredNotified) s.shownExpired = true;
+                            if (s.expiringNotified) s.shownExpiring = true;
+                            if (s.dailyLimitNotified) s.shownDailyLimit = true;
+
+                            // تصفير الإشعارات المعروضة
+                            s.expiredNotified = false;
+                            s.expiringNotified = false;
+                            s.dailyLimitNotified = false;
+                          }
+                          setState(() {}); // تحديث الـ badge
+                        });
+                      },
+                    ),
+
+                    // Badge
+                    if (badgeCount > 0)
+                      Positioned(
+                        right: 4,
+                        top: 4,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            '$badgeCount',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+
+                // Badge مربوط بالـ DB
+                /*   FutureBuilder<int>(
+                  future: getBadgeCount(),
+                  builder: (context, snapshot) {
+                    final count = snapshot.data ?? 0;
+                    if (count == 0) return const SizedBox.shrink();
+
+                    return Positioned(
+                      right: 4,
+                      top: 4,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          '$count',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                     );
                   },
-                ),
-                // Badge
-                if /* (getExpiringSessions().isNotEmpty ||
-                    getExpiredSessions().isNotEmpty)|| */ (badgeCount > 0)
-                  Positioned(
-                    right: 4,
-                    top: 4,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Text(
-                        '$badgeCount',
-                        // '${getExpiringSessions().length + getExpiredSessions().length}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
+                ),*/
               ],
             ),
           ],
@@ -1677,70 +2424,48 @@ $dailyLimitInfo
           child: Column(
             children: [
               // ---------------- البحث ----------------
-              TextField(
+              CustomFormField(
+                onChanged: (value) {
+                  // لو فاضي → نرجع كل المشتركين
+                  if (value.trim().isEmpty) {
+                    _subsKey.currentState?.applySearch("");
+                  } else {
+                    _subsKey.currentState?.applySearch(value);
+                  }
+                },
                 controller: _searchCtrl,
-                style: const TextStyle(color: Colors.white, fontSize: 16),
-                cursorColor: Colors.blueAccent,
-                decoration: InputDecoration(
-                  hintText: 'ابحث عن مشترك',
-                  hintStyle: TextStyle(color: Colors.white70),
-                  prefixIcon: const Icon(Icons.search, color: Colors.white70),
-                  filled: true,
-                  fillColor: Colors.grey[900],
-                  contentPadding: const EdgeInsets.symmetric(
-                    vertical: 16,
-                    horizontal: 12,
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: Colors.grey.shade700),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(
-                      color: Colors.blueAccent,
-                      width: 2,
-                    ),
-                  ),
+                hint: 'البحث',
+                validator:
+                    (v) => (v?.trim().isEmpty ?? true) ? 'ادخل الاسم' : null,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
                 ),
               ),
-
               const SizedBox(height: 12),
 
               // ---------------- اختيار باقة ----------------
               // Dropdown
-              DropdownButtonFormField<SubscriptionPlan>(
+              CustomDropdownFormField<SubscriptionPlan>(
+                hint: "اختر اشتراك (اختياري)",
                 value: _selectedPlan,
-                dropdownColor: Colors.grey[900],
-                style: const TextStyle(color: Colors.white, fontSize: 16),
-                decoration: InputDecoration(
-                  labelText: "اختر اشتراك (اختياري)",
-                  labelStyle: const TextStyle(color: Colors.white70),
-                  filled: true,
-                  fillColor: Colors.grey[900],
-                  contentPadding: const EdgeInsets.symmetric(
-                    vertical: 16,
-                    horizontal: 12,
+                items: [
+                  const DropdownMenuItem<SubscriptionPlan>(
+                    value: null,
+                    child: Text(
+                      "اختيار اشتراك",
+                      style: TextStyle(color: Colors.white70),
+                    ),
                   ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: Colors.grey.shade700),
-                  ),
-                  focusedBorder: const OutlineInputBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                    borderSide: BorderSide(color: Colors.blueAccent, width: 2),
-                  ),
-                ),
-                items:
-                    AdminDataService.instance.subscriptions.map((s) {
-                      return DropdownMenuItem(
-                        value: s,
-                        child: Text(
-                          "${s.name} - ${s.price} ج",
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      );
-                    }).toList(),
+                  ...AdminDataService.instance.subscriptions.map((s) {
+                    return DropdownMenuItem(
+                      value: s,
+                      child: Text(
+                        "${s.name} - ${s.price} ج",
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    );
+                  }),
+                ],
                 onChanged: (val) => setState(() => _selectedPlan = val),
               ),
 
@@ -1750,52 +2475,24 @@ $dailyLimitInfo
               Row(
                 children: [
                   Expanded(
-                    child: TextField(
+                    child: CustomFormField(
                       controller: _nameCtrl,
-                      style: const TextStyle(color: Colors.white, fontSize: 16),
-                      cursorColor: Colors.blueAccent,
-                      decoration: InputDecoration(
-                        hintText: 'اسم العميل',
-                        hintStyle: const TextStyle(color: Colors.white70),
-                        filled: true,
-                        fillColor: Colors.grey[900],
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 16,
-                          horizontal: 12,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: Colors.grey.shade700),
-                        ),
-                        focusedBorder: const OutlineInputBorder(
-                          borderRadius: BorderRadius.all(Radius.circular(12)),
-                          borderSide: BorderSide(
-                            color: Colors.blueAccent,
-                            width: 2,
-                          ),
-                        ),
+                      hint: 'اسم العميل',
+                      validator:
+                          (v) =>
+                              (v?.trim().isEmpty ?? true) ? 'ادخل الاسم' : null,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: _startSession,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blueAccent,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 16,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'ابدأ تسجيل',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
+                  SizedBox(
+                    width: 150,
+                    height: 45,
+                    child: CustomButton(
+                      text: "ابدأ تسجيل",
+                      onPressed: _startSession,
                     ),
                   ),
                 ],
@@ -1806,7 +2503,7 @@ $dailyLimitInfo
               // ---------------- Tabs ----------------
               Expanded(
                 child: DefaultTabController(
-                  length: 4,
+                  length: 3,
                   child: Column(
                     children: [
                       Container(
@@ -1815,68 +2512,80 @@ $dailyLimitInfo
                           vertical: 8,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.grey[850], // خلفية الـ TabBar
+                          color: AppColorsDark.bgCardColor, // خلفية الـ TabBar
                           borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: TabBar(
-                          indicatorPadding: EdgeInsets.zero,
-                          indicatorSize: TabBarIndicatorSize.label,
-                          indicator: BoxDecoration(
-                            color: Colors.blueAccent,
-                            borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.transparent,
+                            width: 0,
                           ),
-                          labelColor: Colors.white,
-                          unselectedLabelColor: Colors.white70,
-                          tabs: const [
-                            Tab(
-                              child: Padding(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 24,
-                                  vertical: 8,
-                                ),
-                                child: Text("مشتركين باقات"),
+                        ),
+                        child: Builder(
+                          builder: (context) {
+                            return TabBar(
+                              onTap: (index) {
+                                final controller = DefaultTabController.of(
+                                  context,
+                                );
+                                controller.animateTo(
+                                  index,
+                                  duration: Duration.zero, // ✅ من غير أنيميشن
+                                  curve: Curves.linear,
+                                );
+                              },
+                              overlayColor: MaterialStateProperty.all(
+                                Colors.transparent,
                               ),
-                            ),
-                            Tab(
-                              child: Padding(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 24,
-                                  vertical: 12,
-                                ),
-                                child: Text("مشتركين حر"),
+                              indicatorColor: Colors.transparent,
+                              indicatorWeight: 0,
+                              indicatorPadding: EdgeInsets.zero,
+                              dividerColor: Colors.transparent,
+                              indicator: BoxDecoration(
+                                color: AppColorsDark.mainColor,
+                                borderRadius: BorderRadius.circular(12),
                               ),
-                            ),
-                            Tab(
-                              child: Padding(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 24,
-                                  vertical: 12,
+                              indicatorSize: TabBarIndicatorSize.tab,
+                              labelColor: Colors.white,
+                              unselectedLabelColor: Colors.white70,
+                              tabs: [
+                                const Tab(
+                                  child: Text(
+                                    "مشتركين باقات",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 20,
+                                    ),
+                                  ),
                                 ),
-                                child: Text("الغرف"),
-                              ),
-                            ),
-                            Tab(
-                              child: Padding(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 24,
-                                  vertical: 12,
+                                Tab(
+                                  child: const Text(
+                                    "مشتركين حر",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 20,
+                                    ),
+                                  ),
                                 ),
-                                child: Text("المنتجات"),
-                              ),
-                            ),
-                          ],
+                                const Tab(
+                                  child: Text(
+                                    "الغرف",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 20,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
                         ),
                       ),
                       const SizedBox(height: 8),
                       Expanded(
                         child: TabBarView(
                           children: [
-                            AdminSubscribersPagee(), // المشتركين باقات
+                            AdminSubscribersPagee(key: _subsKey),
                             _buildSubscribersList(withPlan: false),
                             CashierRoomsPage(), // المشتركين حر
-                            _buildSalesList(),
-
-                            // المنتجات
                           ],
                         ),
                       ),
@@ -2077,25 +2786,41 @@ $dailyLimitInfo
       );
 
     return ListView.builder(
-      itemCount: filtered.length,
+      itemCount: filtered.where((s) => s.isActive).length,
       itemBuilder: (context, i) {
-        final s = filtered[i];
+        final activeSessions = filtered.where((s) => s.isActive).toList();
+        final s = activeSessions[i];
+
         final spentMinutes = getSessionMinutes(s);
         final endTime = getSubscriptionEnd(s);
 
-        String timeInfo =
+        String timeInfo2 =
             s.subscription != null
                 ? (endTime != null
                     ? "من: ${s.start.toLocal()} ⇢ ينتهي: ${endTime.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة"
                     : "من: ${s.start.toLocal()} ⇢ غير محدود ⇢ مضى: ${spentMinutes} دقيقة")
                 : "من: ${s.start.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة";
+        final hours = spentMinutes ~/ 60; // القسمة الصحيحة
+        final minutes = spentMinutes % 60; // الباقي
+
+        String timeInfo;
+        if (hours > 0) {
+          timeInfo = "$hours ساعة ${minutes} دقيقة";
+        } else {
+          timeInfo = "$minutes دقيقة";
+        }
 
         return Card(
-          color: Colors.grey[850],
-          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+          color: AppColorsDark.bgCardColor,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(
+              color: AppColorsDark.mainColor.withOpacity(0.4),
+              width: 1.5,
+            ),
           ),
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -2104,36 +2829,60 @@ $dailyLimitInfo
                 Text(
                   s.name,
                   style: const TextStyle(
+                    fontSize: 18,
                     fontWeight: FontWeight.bold,
-                    fontSize: 16,
                     color: Colors.white,
                   ),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '${s.isActive ? (s.isPaused ? "متوقف مؤقت" : "نشط") : "انتهت"} - $timeInfo',
+                  '${s.isActive ? (s.isPaused ? "متوقف مؤقت" : " نشط منذ ") : "انتهت"} - $timeInfo',
                   style: const TextStyle(color: Colors.white70, fontSize: 13),
                 ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
-                      child: ElevatedButton(
+                      /*ElevatedButton(
+                      onPressed:
+                      s.isActive ? () => _togglePauseSessionFor(s) : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blueGrey[700],
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: Text(s.isPaused ? 'استئناف' : 'ايقاف مؤقت'),
+                    ),*/
+                      child: CustomButton(
+                        color:
+                            s.isPaused
+                                ? Colors.transparent
+                                : AppColorsDark.mainColor,
+                        border: s.isPaused ? false : true,
+                        text: s.isPaused ? 'استكمال الوقت' : 'ايقاف مؤقت',
                         onPressed:
                             s.isActive ? () => _togglePauseSessionFor(s) : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blueGrey[700], // زر رئيسي
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        child: Text(s.isPaused ? 'استئناف' : 'ايقاف مؤقت'),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: ElevatedButton(
+                      child: CustomButton(
+                        text: 'اضف & دفع',
+
+                        onPressed:
+                            s.isActive && !s.isPaused
+                                ? () async {
+                                  setState(() => _selectedSession = s);
+                                  await showModalBottomSheet(
+                                    context: context,
+                                    builder: (_) => _buildAddProductsAndPay(s),
+                                  );
+                                }
+                                : null,
+                      ),
+                      /*     ElevatedButton(
                         onPressed:
                             s.isActive && !s.isPaused
                                 ? () async {
@@ -2145,14 +2894,14 @@ $dailyLimitInfo
                                 }
                                 : null,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blue[700], // زر الدفع
+                          backgroundColor: Colors.blue[700],
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
                         ),
                         child: const Text('اضف & دفع'),
-                      ),
+                      ),*/
                     ),
                   ],
                 ),
@@ -2162,6 +2911,69 @@ $dailyLimitInfo
         );
       },
     );
+  }
+
+  void _handleDuplicateSessions(List<Session> sessions) async {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final Map<String, List<Session>> grouped = {};
+      for (var s in sessions) {
+        grouped.putIfAbsent(s.name, () => []).add(s);
+      }
+
+      for (var entry in grouped.entries) {
+        if (entry.value.length > 1) {
+          final duplicates = entry.value;
+          duplicates.sort((a, b) => b.start.compareTo(a.start));
+
+          final latest = duplicates.first;
+          final older = duplicates.skip(1).toList();
+
+          final action = await showDialog<String>(
+            context: context,
+            builder: (ctx) {
+              return AlertDialog(
+                title: Text("تكرار الجلسات: ${latest.name}"),
+                content: const Text(
+                  "فيه أكثر من جلسة بنفس الاسم.\nعايز تعمل إيه؟",
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, "close_older"),
+                    child: const Text("اقفل القديمة"),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, "merge"),
+                    child: const Text("ادمجهم"),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, "ignore"),
+                    child: const Text("سيبهم زي ما هما"),
+                  ),
+                ],
+              );
+            },
+          );
+
+          if (action == "close_older") {
+            for (var s in older) {
+              s.isActive = false;
+              await SessionDb.updateSession(s);
+            }
+          } else if (action == "merge") {
+            for (var s in older) {
+              latest.elapsedMinutes += s.elapsedMinutes;
+              latest.cart.addAll(s.cart);
+              s.isActive = false;
+              await SessionDb.updateSession(s);
+            }
+            await SessionDb.updateSession(latest);
+          }
+        }
+      }
+
+      // بعد المعالجة، حدث الصفحة بدون استدعاء `_loadSessionsSub` مرة تانية
+      if (mounted) setState(() {});
+    });
   }
 
   /* Widget _buildSubscribersList({required bool withPlan}) {

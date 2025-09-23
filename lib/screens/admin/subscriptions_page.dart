@@ -153,6 +153,8 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
 */
 
 import 'package:flutter/material.dart';
+import 'package:workspace/utils/colors.dart';
+import 'package:workspace/widget/buttom.dart';
 import 'dart:math';
 import '../../core/data_service.dart'; // <-- هذا يضيف AdminDataService
 
@@ -190,16 +192,17 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
     return Scaffold(
       appBar: AppBar(
         forceMaterialTransparency: true,
-        title: const Text('اداره الاشتراكات'),
+        title: Center(child: const Text('اداره الاشتراكات')),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            ElevatedButton.icon(
+            CustomButton(
+              text: 'اضف باقه',
               onPressed: _addPlan,
-              icon: const Icon(Icons.add),
-              label: const Text('اضف باقه'),
+              infinity: false,
+              border: true,
             ),
             const SizedBox(height: 12),
             Expanded(
@@ -208,7 +211,14 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
                 itemBuilder: (context, i) {
                   final s = subscriptions[i];
                   return Card(
-                    color: const Color(0xFF071022),
+                    color: AppColorsDark.bgCardColor,
+                    shape: RoundedRectangleBorder(
+                      side: BorderSide(
+                        color: AppColorsDark.mainColor,
+                        width: 1.5,
+                      ), // اللون والسمك
+                      borderRadius: BorderRadius.circular(8), // تقوس الحواف
+                    ),
                     child: ListTile(
                       title: Text(
                         s.name,

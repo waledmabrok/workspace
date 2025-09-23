@@ -5,11 +5,23 @@ import 'models.dart';
 class CustomerBalanceDb {
   static Future<void> upsert(CustomerBalance b) async {
     final db = await DbHelper.instance.database;
+    await _ensureUpdatedAtColumn(db);
     await db.insert(
       "customer_balances",
       b.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  static Future<void> _ensureUpdatedAtColumn(Database db) async {
+    // جرب إضافة العمود إذا مش موجود
+    try {
+      await db.execute(
+        'ALTER TABLE customer_balances ADD COLUMN updatedAt TEXT',
+      );
+    } catch (_) {
+      // لو العمود موجود هيرمي خطأ، نتجاهله
+    }
   }
 
   static Future<List<CustomerBalance>> getAll() async {
@@ -30,17 +42,17 @@ class CustomerBalanceDb {
   /// ✅ تعديل الرصيد (موجب = يزود، سالب = يخصم)
   static Future<void> adjust(String customerId, double delta) async {
     final db = await DbHelper.instance.database;
-
+    await _ensureUpdatedAtColumn(db);
     // هات الرصيد الحالي
     final current = await getBalance(customerId);
     final newBalance = current + delta;
 
     // Upsert
-    await db.insert(
-      'customer_balances',
-      {'customerId': customerId, 'balance': newBalance},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('customer_balances', {
+      'customerId': customerId,
+      'balance': newBalance,
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   static Future<double> getBalance(String customerId) async {

@@ -194,11 +194,14 @@ class _ProductDialogState extends State<ProductDialog> {
 */
 
 import 'package:flutter/material.dart';
+import 'package:workspace/utils/colors.dart';
+import 'package:workspace/widget/buttom.dart';
 import 'dart:math';
 import '../../core/data_service.dart'; // <-- هذا يضيف AdminDataService
 
 import '../../core/models.dart';
-import '../../core/product_db.dart'; // هنا كلاس التعامل مع SQLite
+import '../../core/product_db.dart';
+import '../../widget/form.dart'; // هنا كلاس التعامل مع SQLite
 
 class ProductsPage extends StatefulWidget {
   @override
@@ -224,52 +227,61 @@ class _ProductsPageState extends State<ProductsPage> {
       ..addAll(data);
   }
 
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('اداره المنتجات')),
+      appBar: AppBar(
+        title: Center(child: const Text('اداره المنتجات')),
+        forceMaterialTransparency: true,
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            ElevatedButton.icon(
+            CustomButton(
+              infinity: false,
+              text: "اضف منتج جديد",
+              onPressed: _addProduct,
+              border: true,
+            ),
+            /*     ElevatedButton.icon(
               onPressed: _addProduct,
               icon: const Icon(Icons.add),
               label: const Text('اضف منتج جديد'),
-            ),
+            ),*/
             const SizedBox(height: 12),
             Expanded(
-              child: _products.isEmpty
-                  ? const Center(child: Text("لا توجد منتجات"))
-                  : ListView.builder(
-                itemCount: _products.length,
-                itemBuilder: (context, i) {
-                  final p = _products[i];
-                  return Card(
-                    color: const Color(0xFF071022),
-                    child: ListTile(
-                      title: Text(p.name),
-                      subtitle: Text(
-                        'سعر: ${p.price.toStringAsFixed(2)} - مخزون: ${p.stock}',
+              child:
+                  _products.isEmpty
+                      ? const Center(child: Text("لا توجد منتجات"))
+                      : ListView.builder(
+                        itemCount: _products.length,
+                        itemBuilder: (context, i) {
+                          final p = _products[i];
+                          return Card(
+                            color: AppColorsDark.bgCardColor,
+                            child: ListTile(
+                              title: Text(p.name),
+                              subtitle: Text(
+                                'سعر: ${p.price.toStringAsFixed(2)} - مخزون: ${p.stock}',
+                              ),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit),
+                                    onPressed: () => _editProduct(p),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete),
+                                    onPressed: () => _deleteProduct(p),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
                       ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.edit),
-                            onPressed: () => _editProduct(p),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete),
-                            onPressed: () => _deleteProduct(p),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
             ),
           ],
         ),
@@ -300,24 +312,22 @@ class _ProductsPageState extends State<ProductsPage> {
     if (res != null) {
       await ProductDb.insertProduct(res); // استبدال/تحديث
 
-      final index = AdminDataService.instance.products
-          .indexWhere((prod) => prod.id == res.id);
+      final index = AdminDataService.instance.products.indexWhere(
+        (prod) => prod.id == res.id,
+      );
       if (index != -1) AdminDataService.instance.products[index] = res;
 
       _loadProducts();
     }
   }
 
-
   Future<void> _deleteProduct(Product p) async {
     await ProductDb.deleteProduct(p.id);
 
-    AdminDataService.instance.products
-        .removeWhere((prod) => prod.id == p.id);
+    AdminDataService.instance.products.removeWhere((prod) => prod.id == p.id);
 
     _loadProducts();
   }
-
 }
 
 class ProductDialog extends StatefulWidget {
@@ -374,16 +384,18 @@ class _ProductDialogState extends State<ProductDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
+            CustomFormField(
+              hint: 'الاسم',
               controller: _name,
-              decoration: const InputDecoration(
-                labelText: 'الاسم',
-                prefixIcon: Icon(Icons.inventory_2),
-              ),
-              onSubmitted: (_) => _save(),
+              // onChanged: (_) => _save(),
             ),
             const SizedBox(height: 12),
-            TextField(
+            CustomFormField(
+              hint: "السعر",
+              controller: _price,
+              keyboardType: TextInputType.number,
+            ),
+            /*TextField(
               controller: _price,
               decoration: const InputDecoration(
                 labelText: 'السعر',
@@ -392,8 +404,10 @@ class _ProductDialogState extends State<ProductDialog> {
               keyboardType: TextInputType.number,
               onSubmitted: (_) => _save(),
             ),
+            */
             const SizedBox(height: 12),
-            TextField(
+            CustomFormField(hint: "الكميه", controller: _stock),
+            /*  TextField(
               controller: _stock,
               decoration: const InputDecoration(
                 labelText: 'المخزون',
@@ -401,7 +415,7 @@ class _ProductDialogState extends State<ProductDialog> {
               ),
               keyboardType: TextInputType.number,
               onSubmitted: (_) => _save(),
-            ),
+            ),*/
           ],
         ),
       ),
@@ -410,11 +424,12 @@ class _ProductDialogState extends State<ProductDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('إلغاء'),
         ),
-        ElevatedButton.icon(
+        CustomButton(text: "الحفظ", onPressed: _save, infinity: false),
+        /* ElevatedButton.icon(
           onPressed: _save,
           icon: const Icon(Icons.save),
           label: const Text('حفظ'),
-        ),
+        ),*/
       ],
     );
   }

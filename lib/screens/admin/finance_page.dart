@@ -207,6 +207,9 @@ class _SaleDialogState extends State<SaleDialog> {
 */
 
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:workspace/utils/colors.dart';
+import 'package:workspace/widget/buttom.dart';
 import '../../core/FinanceDb.dart';
 import '../../core/data_service.dart';
 import '../../core/models.dart';
@@ -297,13 +300,25 @@ class _FinancePageDailyState extends State<FinancePage> {
 
   double get profit => totalSales - totalExpenses;
 
+  String formatDateArabic(DateTime date) {
+    final formatter = DateFormat('yyyy/MM/dd – HH:mm', 'ar'); // عربي
+    String formatted = formatter.format(date);
+    // تحويل الأرقام للعربية
+    const english = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+    const arabic = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+    for (int i = 0; i < 10; i++) {
+      formatted = formatted.replaceAll(english[i], arabic[i]);
+    }
+    return formatted;
+  }
+
   // -------------------- واجهة المستخدم --------------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         forceMaterialTransparency: true,
-        title: const Text('المصاريف و الأرباح اليومية'),
+        title: Center(child: const Text('المصاريف و الأرباح اليومية')),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -312,25 +327,30 @@ class _FinancePageDailyState extends State<FinancePage> {
             // أزرار إضافة مصروف وبيع
             Row(
               children: [
-                ElevatedButton.icon(
+                CustomButton(
+                  text:
+                      "${selectedDate.day}/${selectedDate.month}/${selectedDate.year}",
                   onPressed: _pickDate,
-                  icon: const Icon(Icons.calendar_today),
-                  label: Text(
-                    "${selectedDate.day}/${selectedDate.month}/${selectedDate.year}",
-                  ),
+                  infinity: false,
+                  border: true,
                 ),
-                const SizedBox(width: 12),
 
-                ElevatedButton.icon(
+                const SizedBox(width: 12),
+                CustomButton(
+                  text: "اضف مصروف",
+                  onPressed: _addExpense,
+                  infinity: false,
+                ),
+                /* ElevatedButton.icon(
                   onPressed: _addExpense,
                   icon: const Icon(Icons.add),
                   label: const Text('اضف مصروف'),
-                ),
+                ),*/
                 const SizedBox(width: 12),
-                ElevatedButton.icon(
+                CustomButton(
+                  text: 'سجل بيع',
                   onPressed: _recordSale,
-                  icon: const Icon(Icons.point_of_sale),
-                  label: const Text('سجل بيع'),
+                  infinity: false,
                 ),
               ],
             ),
@@ -338,13 +358,22 @@ class _FinancePageDailyState extends State<FinancePage> {
 
             // الملخص اليومي
             Card(
-              color: const Color(0xFF071022),
-              child: ListTile(
-                title: const Text('ملخص اليوم'),
-                subtitle: Text(
-                  'إجمالي المبيعات: ${totalSales.toStringAsFixed(2)}  |  إجمالي المصاريف: ${totalExpenses.toStringAsFixed(2)}',
+              color: AppColorsDark.bgCardColor,
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: ListTile(
+                  title: const Text(
+                    'ملخص اليوم',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                  ),
+                  subtitle: Text(
+                    'إجمالي المبيعات: ${totalSales.toStringAsFixed(2)}  |  إجمالي المصاريف: ${totalExpenses.toStringAsFixed(2)}',
+                  ),
+                  trailing: Text(
+                    'الربح: ${profit.toStringAsFixed(2)}',
+                    style: TextStyle(fontSize: 15),
+                  ),
                 ),
-                trailing: Text('الربح: ${profit.toStringAsFixed(2)}'),
               ),
             ),
             const SizedBox(height: 12),
@@ -359,11 +388,23 @@ class _FinancePageDailyState extends State<FinancePage> {
                   ),
                   ...ds.expenses.map(
                     (e) => Card(
-                      color: const Color(0xFF071022),
-                      child: ListTile(
-                        title: Text(e.title),
-                        subtitle: Text('${e.date.toLocal()}'),
-                        trailing: Text(e.amount.toStringAsFixed(2)),
+                      color: AppColorsDark.bgCardColor,
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: ListTile(
+                          title: Text(
+                            e.title,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          subtitle: Text(formatDateArabic(e.date.toLocal())),
+                          trailing: Text(
+                            e.amount.toStringAsFixed(2),
+                            style: TextStyle(fontSize: 15),
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -374,11 +415,20 @@ class _FinancePageDailyState extends State<FinancePage> {
                   ),
                   ...ds.sales.map(
                     (s) => Card(
-                      color: const Color(0xFF071022),
+                      color: AppColorsDark.bgCardColor,
                       child: ListTile(
-                        title: Text(s.description),
-                        subtitle: Text('${s.date.toLocal()}'),
-                        trailing: Text(s.amount.toStringAsFixed(2)),
+                        title: Text(
+                          s.description,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        subtitle: Text(formatDateArabic(s.date.toLocal())),
+                        trailing: Text(
+                          s.amount.toStringAsFixed(2),
+                          style: TextStyle(fontSize: 15),
+                        ),
                       ),
                     ),
                   ),

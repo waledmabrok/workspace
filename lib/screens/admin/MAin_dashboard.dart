@@ -23,7 +23,7 @@ class _DashboardPageState extends State<DashboardPagee> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("📊 Dashboard"),
+        title: Center(child: const Text("📊 Dashboard")),
         forceMaterialTransparency: true,
       ),
       body: RefreshIndicator(

@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:workspace/utils/colors.dart';
+import 'package:workspace/widget/buttom.dart';
 import '../../core/data_service.dart';
 import '../../core/FinanceDb.dart';
 import '../../core/models.dart';
@@ -47,12 +50,20 @@ class _SalesPageState extends State<SalesPage> {
     setState(() {});
   }
 
+  String formatDateTimeArabic(DateTime dt) {
+    // تحويل الوقت المحلي
+    final local = dt.toLocal();
+    // تنسيق التاريخ والوقت بالعربي
+    final formatter = DateFormat('EEEE d MMMM yyyy – HH:mm', 'ar');
+    return formatter.format(local);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         forceMaterialTransparency: true,
-        title: const Text('الفواتير المدفوعه'),
+        title: Center(child: const Text('الفواتير المدفوعه')),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -62,13 +73,20 @@ class _SalesPageState extends State<SalesPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                ElevatedButton.icon(
+                CustomButton(
+                  text:
+                      "${selectedDate.day}/${selectedDate.month}/${selectedDate.year}",
+                  onPressed: _pickDate,
+                  infinity: false,
+                  border: true,
+                ),
+                /*    ElevatedButton.icon(
                   onPressed: _pickDate,
                   icon: const Icon(Icons.calendar_today),
                   label: Text(
                     "${selectedDate.day}/${selectedDate.month}/${selectedDate.year}",
                   ),
-                ),
+                ),*/
                 Text(
                   'إجمالي المبيعات: ${ds.totalSales.toStringAsFixed(2)}',
                   style: const TextStyle(fontSize: 16),
@@ -85,13 +103,21 @@ class _SalesPageState extends State<SalesPage> {
                         itemBuilder: (context, i) {
                           final s = ds.sales[i];
                           return Card(
-                            color: const Color(0xFF071022),
+                            color: AppColorsDark.bgCardColor,
                             child: ListTile(
-                              title: Text(s.description),
-                              subtitle: Text(
-                                "${s.date.toLocal()}".split(".").first,
+                              title: Text(
+                                s.description,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 18,
+                                ),
                               ),
-                              trailing: Text(s.amount.toStringAsFixed(2)),
+                              subtitle: Text(formatDateTimeArabic(s.date)),
+
+                              trailing: Text(
+                                s.amount.toStringAsFixed(2),
+                                style: TextStyle(fontSize: 18),
+                              ),
                             ),
                           );
                         },

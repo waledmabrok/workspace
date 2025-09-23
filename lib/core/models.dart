@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 
+import 'Db_helper.dart';
+
 String generateId() => DateTime.now().millisecondsSinceEpoch.toString();
 
 /// ---------------- SubscriptionPlan ----------------
@@ -302,6 +304,86 @@ class Discount {
   }
 }
 
+class RoomPricing {
+  final String roomId;
+  final String roomName;
+  final double basePrice;
+  final int firstFreeMinutes;
+  final double firstHourFee;
+  final double perHourAfterFirst;
+  final double dailyCap;
+
+  RoomPricing({
+    required this.roomId,
+    required this.roomName,
+    required this.basePrice,
+    required this.firstFreeMinutes,
+    required this.firstHourFee,
+    required this.perHourAfterFirst,
+    required this.dailyCap,
+  });
+}
+
+extension DbHelperRooms on DbHelper {
+  Future<List<RoomPricing>> getRoomPricings() async {
+    final db = await database;
+    final rows = await db.query('rooms');
+
+    return rows.map((row) {
+      return RoomPricing(
+        roomId: row['id'] as String,
+        roomName: row['name'] as String,
+        basePrice: (row['basePrice'] as num).toDouble(),
+        firstFreeMinutes: (row['firstFreeMinutesRoom'] as num).toInt(),
+        firstHourFee: (row['firstHourFeeRoom'] as num).toDouble(),
+        perHourAfterFirst: (row['perHourAfterFirstRoom'] as num).toDouble(),
+        dailyCap: (row['dailyCapRoom'] as num).toDouble(),
+      );
+    }).toList();
+  }
+}
+
+///-----------------------notification===========
+class NotificationItem {
+  final int? id;
+  final String sessionId;
+  final String type; // "expiring", "expired", "dailyLimit"
+  final String message;
+  bool isRead;
+  final DateTime createdAt;
+
+  NotificationItem({
+    this.id,
+    required this.sessionId,
+    required this.type,
+    required this.message,
+    this.isRead = false,
+    DateTime? createdAt,
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'sessionId': sessionId,
+      'type': type,
+      'message': message,
+      'isRead': isRead ? 1 : 0,
+      'createdAt': createdAt.toIso8601String(),
+    };
+  }
+
+  factory NotificationItem.fromMap(Map<String, dynamic> map) {
+    return NotificationItem(
+      id: map['id'],
+      sessionId: map['sessionId'],
+      type: map['type'],
+      message: map['message'],
+      isRead: map['isRead'] == 1,
+      createdAt: DateTime.parse(map['createdAt']),
+    );
+  }
+}
+
 /// ---------------- Session ----------------
 // داخل models.dart — تعديل/استبدال class Session الموجود عندك
 
@@ -336,7 +418,14 @@ class Session {
   DateTime? savedSubscriptionEnd;
   DateTime? savedSubscriptionConvertedAt;
   DateTime? lastDailySpentCheckpoint;
-
+  bool dailyLimitNotified = false;
+  bool expiringNotified = false;
+  bool expiredNotified = false;
+  bool shownInBadge = false;
+  bool shownExpired = false; // لانهاء الاشتراك
+  bool shownExpiring = false; // لقرب الانتهاء
+  bool shownDailyLimit = false; // للحد اليومي
+  bool isMergedOrClosed = false;
   Session({
     required this.id,
     this.originalSubscriptionId,
