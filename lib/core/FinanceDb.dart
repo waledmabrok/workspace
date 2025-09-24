@@ -298,6 +298,19 @@ class FinanceDb {
     await setCustomerBalance(customerId, updated);
   }
 
+  static Future<List<Map<String, dynamic>>> getShiftsByCashierId(
+    String cashierId,
+  ) async {
+    final db = await DbHelper.instance.database;
+    final rows = await db.query(
+      'shifts',
+      where: 'cashierId = ?',
+      whereArgs: [cashierId],
+      orderBy: 'openedAt DESC',
+    );
+    return rows;
+  }
+
   // ---------- قفل الشيفت ----------
   static Future<void> closeShift({
     required String id,
@@ -307,15 +320,20 @@ class FinanceDb {
     DateTime? closedAt,
   }) async {
     final db = await DbHelper.instance.database;
-    final now = (closedAt ?? DateTime.now()).millisecondsSinceEpoch;
+    final now = (closedAt ?? DateTime.now()).toIso8601String();
     final signersJson = jsonEncode(signers);
-    await db.insert('shifts', {
-      'id': id,
-      'closed_at': now,
-      'signers': signersJson,
-      'drawer_balance': drawerBalanceAtClose,
-      'total_sales': totalSales,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+    await db.update(
+      'shifts',
+      {
+        'closedAt': now,
+        'signers': signersJson,
+        'closingBalance': drawerBalanceAtClose,
+        'totalSales': totalSales,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   static Future<List<Map<String, dynamic>>> getShiftsByDate(

@@ -23,7 +23,7 @@ class _DashboardPageState extends State<DashboardPagee> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Center(child: const Text("📊 Dashboard")),
+        title: const Text("📊 Dashboard"),
         forceMaterialTransparency: true,
       ),
       body: RefreshIndicator(
@@ -147,6 +147,7 @@ class _DashboardPageState extends State<DashboardPagee> {
     final openingBalance = (shift["openingBalance"] as num?)?.toDouble() ?? 0.0;
     final closingBalance = (shift["closingBalance"] as num?)?.toDouble() ?? 0.0;
     final totalSales = closingBalance - openingBalance + totalExpenses;
+
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 8),
       child: ListTile(

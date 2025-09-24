@@ -17,12 +17,12 @@ class DbHelper {
     final databaseFactory = databaseFactoryFfi;
 
     final dbPath = await databaseFactory.getDatabasesPath();
-    final path = join(dbPath, 'workspace20.db');
+    final path = join(dbPath, 'workspace21.db');
 
     _database = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 10,
+        version: 11,
         onCreate: _onCreate,
 
         onOpen: (db) async {
@@ -36,11 +36,54 @@ class DbHelper {
           await _ensurePricingSettingsRoom(db);
           await migrateSalesTable(db);
           await _ensureNotificationsTable(db);
+          await _ensureCashiersTable(db);
+          await migrateCashiers(db);
+          await ensureCashierIdColumn(db);
         },
       ),
     );
 
     return _database!;
+  }
+
+  Future<void> ensureCashierIdColumn(Database db) async {
+    final cols = await db.rawQuery('PRAGMA table_info(shifts)');
+    final colNames = cols.map((c) => c['name'] as String).toList();
+    if (!colNames.contains('cashierId')) {
+      await db.execute('ALTER TABLE shifts ADD COLUMN cashierId TEXT');
+    }
+  }
+
+  Future<void> migrateCashiers(Database db) async {
+    final cols = await db.rawQuery('PRAGMA table_info(cashiers)');
+    final colNames = cols.map((c) => c['name'] as String).toList();
+
+    if (!colNames.contains('username')) {
+      await db.execute('''
+      CREATE TABLE cashiers_new (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        username TEXT UNIQUE,
+        password TEXT NOT NULL
+      )
+    ''');
+
+      // نسخ البيانات القديمة
+      final oldRows = await db.query('cashiers');
+      for (final row in oldRows) {
+        await db.insert('cashiers_new', {
+          'id': row['id'],
+          'name': row['name'],
+          'password': row['password'],
+          'username': row['name'], // استخدام الاسم كـ username افتراضي
+        });
+      }
+
+      // حذف الجدول القديم
+      await db.execute('DROP TABLE cashiers');
+      // إعادة التسمية
+      await db.execute('ALTER TABLE cashiers_new RENAME TO cashiers');
+    }
   }
 
   Future<void> _ensurePricingSettingsRoom(Database db) async {
@@ -67,19 +110,76 @@ class DbHelper {
     }
   }
 
+  Future<double> getClosingBalance() async {
+    final db = await database;
+    final rows = await db.query(
+      'drawer',
+      where: 'id = ?',
+      whereArgs: [1],
+      limit: 1,
+    );
+    return (rows.first['balance'] as num?)?.toDouble() ?? 0.0;
+  }
+
+  Future<Map<String, dynamic>?> getCurrentShiftForCashier(
+    String cashierName,
+  ) async {
+    final db = await database;
+    final rows = await db.query(
+      'shifts',
+      where: 'closedAt IS NULL AND cashierName = ?',
+      whereArgs: [cashierName],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final shift = rows.first;
+    final summary = await getShiftSummary(shift['id'] as String);
+    return {
+      "id": shift['id'],
+      "cashierName": shift['cashierName'],
+      "openedAt": shift['openedAt'],
+      "openingBalance": shift['openingBalance'],
+      "closingBalance": shift['closingBalance'],
+      "sales": summary['sales'],
+      "expenses": summary['expenses'],
+      "profit": summary['profit'],
+    };
+  }
+
+  Future<void> _ensureCashiersTable(Database db) async {
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS cashiers (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  password TEXT NOT NULL
+)
+''');
+  }
+
   Future<void> _ensureNotificationsTable(Database db) async {
     try {
       await db.execute('''
       CREATE TABLE IF NOT EXISTS notifications (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sessionId TEXT,
-        type TEXT,
+        type TEXT,          -- expiring / expired / dailyLimit
         message TEXT,
         isRead INTEGER DEFAULT 0,
+        isDeleted INTEGER DEFAULT 0,
         createdAt INTEGER DEFAULT (strftime('%s','now') * 1000),
         UNIQUE(sessionId, type) ON CONFLICT IGNORE
       )
     ''');
+
+      // لو الجدول قديم ومفيهوش العمود نزوده
+      final cols = await db.rawQuery('PRAGMA table_info(notifications)');
+      final colNames = cols.map((c) => c['name'] as String).toList();
+      if (!colNames.contains('isDeleted')) {
+        await db.execute(
+          'ALTER TABLE notifications ADD COLUMN isDeleted INTEGER DEFAULT 0',
+        );
+      }
     } catch (e) {
       debugPrint('[_ensureNotificationsTable] error: $e');
     }
@@ -298,7 +398,14 @@ dailyCapRoom REAL
         notes TEXT
       )
     ''');
-
+    // جدول الكاشيرز الجديد
+    await db.execute('''
+    CREATE TABLE IF NOT EXISTS cashiers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      password TEXT NOT NULL
+    )
+  ''');
     // أرصدة العملاء
     await db.execute('''
       CREATE TABLE customer_balances (
@@ -567,8 +674,8 @@ dailyCapRoom REAL
   ///===========================sfift
   Future<void> _ensureShiftTables(Database db) async {
     await db.execute('''
-      CREATE TABLE IF NOT EXISTS shifts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    CREATE TABLE IF NOT EXISTS shifts (
+      id TEXT PRIMARY KEY,
       cashierId TEXT,
       cashierName TEXT,
       openedAt TEXT,

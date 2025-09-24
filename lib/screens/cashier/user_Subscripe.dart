@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:workspace/utils/colors.dart';
+import '../../Timer.dart';
 import '../../core/FinanceDb.dart';
 import '../../core/data_service.dart';
 import '../../core/db_helper_cart.dart';
@@ -26,7 +27,7 @@ class AdminSubscribersPagee extends StatefulWidget {
 
 class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
   @override
-  bool get wantKeepAlive => true; // حافظ على الحالة
+  bool get wantKeepAlive => false; // حافظ على الحالة
   DateTime _selectedDate = DateTime.now();
   List<Session> _sessionsSub = [];
   bool _loading = true;
@@ -55,26 +56,24 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
     super.initState();
     _updateActiveSubscriptionsForNewDay();
     // مؤقّت واحد فقط مع فحص mounted
-    /*_expiringTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+    _expiringTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       if (!mounted) return;
       checkExpiringSessionsSub(context, _sessionsSub);
     });
-*/
     _loadSessionsSub().then((_) => _applyDailyLimitForAllSessionsSub());
     reloadData();
-    /*  _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _uiTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (mounted) setState(() {});
     });
-*/
-    /*   _checkTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+    _checkTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (!mounted) return;
       if (!_loading) _applyDailyLimitForAllSessionsSub();
-    });*/
+    });
   }
 
   @override
   void dispose() {
-    //  _expiringTimer?.cancel();
+    _expiringTimer?.cancel();
     _uiTimer?.cancel();
     _checkTimer?.cancel();
     super.dispose();
@@ -105,17 +104,6 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
   List<Session> _filteredSessionsSup = [];
 
   ///=============================================================
-  Future<void> _ensureSnapshot(Session s) async {
-    if (s.subscription != null && s.savedSubscriptionJson == null) {
-      s.savedSubscriptionJson = jsonEncode(s.subscription!.toJson());
-      s.savedSubscriptionEnd = _getSubscriptionEndSub(s);
-      s.savedElapsedMinutes = s.elapsedMinutes;
-      s.savedDailySpent = _minutesOverlapWithDateSub(s, DateTime.now());
-      s.savedSubscriptionConvertedAt = DateTime.now();
-      await SessionDb.updateSession(s);
-      debugPrint("💾 Snapshot auto-saved for ${s.name}");
-    }
-  }
 
   Future<void> checkExpiringSessionsSub(
     BuildContext context,
@@ -133,7 +121,7 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
         final allowedToday = plan.dailyUsageHours! * 60;
 
         if (spentToday >= allowedToday && s.dailyLimitNotified != true) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          /*ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
                 "⚠️ ${s.name} وصل حد الباقة اليومي — سيكمل على سعر الحر",
@@ -141,7 +129,7 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
               backgroundColor: Colors.orange,
               duration: Duration(seconds: 4),
             ),
-          );
+          );*/
           s.dailyLimitNotified = true;
           await SessionDb.updateSession(s);
         }
@@ -151,13 +139,13 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
       if (s.end != null && now.isBefore(s.end!)) {
         final remaining = s.end!.difference(now);
         if (remaining.inMinutes <= 50 && s.expiringNotified != true) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          /*  ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text("⚠️ ${s.name} اشتراكه قرب يخلص"),
               backgroundColor: Colors.yellow,
               duration: Duration(seconds: 4),
             ),
-          );
+          );*/
           s.expiringNotified = true;
           await SessionDb.updateSession(s);
         }
@@ -165,13 +153,13 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
 
       // الاشتراك انتهى
       if (s.end != null && now.isAfter(s.end!) && s.expiredNotified != true) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        /* ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text("⛔ ${s.name} اشتراكه انتهى"),
             backgroundColor: Colors.red,
             duration: Duration(seconds: 4),
           ),
-        );
+        );*/
         s.expiredNotified = true;
         await SessionDb.updateSession(s);
       }
@@ -300,13 +288,13 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
 
     if (remaining > 0 && remaining <= 10) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        /*ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
               'تبقى $remaining دقيقة من الباقة اليوم — بعد ذلك سيكمل على سعر الحر',
             ),
           ),
-        );
+        );*/
       }
 
       Timer(Duration(minutes: remaining), () async {
@@ -356,6 +344,47 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
       });
     }
   }
+  /*
+  Future<void> _loadSessionsSub({bool firstTime = false}) async {
+    if (firstTime) setState(() => _loading = true);
+
+    final data = await SessionDb.getSessions();
+
+    for (var s in data) {
+      try {
+        s.cart = await CartDb.getCartBySession(s.id);
+      } catch (_) {}
+    }
+
+    if (mounted) {
+      setState(() {
+        _all = data;
+        _filtered = List.from(_all);
+        _sessionsSub = data;
+        if (firstTime) {
+          _loading = false;
+          _initialLoadDone = true;
+        }
+      });
+    }
+  }*/
+  /*
+  Future<void> _loadSessionsSub() async {
+    final data = await SessionDb.getSessions();
+
+    for (var s in data) {
+      try {
+        s.cart = await CartDb.getCartBySession(s.id);
+      } catch (_) {}
+    }
+
+    setState(() {
+      _all = data;
+      _filtered = List.from(_all);
+      _sessionsSub = data;
+    });
+  }
+*/
 
   Future<void> _loadSessionsSub() async {
     setState(() => _loading = true);
@@ -432,6 +461,7 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
     final now = DateTime.now();
 
     // دالة مساعدة: كم دقّة استهلكت الجلسة من بداية الـ session حتى وقت محدد
+    /*
     int consumedUntil(DateTime t) {
       // نمنع حساب زمن من المستقبل
       final upto = t.isBefore(now) ? t : now;
@@ -449,6 +479,29 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
       final consumed = totalSinceStart - frozen;
       return consumed < 0 ? 0 : consumed;
     }
+*/
+    int consumedUntil(DateTime t) {
+      // نمنع حساب زمن من المستقبل
+      final upto = t.isBefore(now) ? t : now;
+
+      // نهاية الجلسة الفعلية
+      final effectiveEnd = _getSubscriptionEndSub(s) ?? upto;
+      final end = effectiveEnd.isBefore(upto) ? effectiveEnd : upto;
+
+      final totalSinceStart = end.difference(s.start).inMinutes;
+
+      int frozen = s.frozenMinutes;
+
+      // ✅ لو الجلسة متوقفة ولسه ما رجعتش
+      if (s.isPaused && s.pauseStart != null) {
+        // لو الـ pause بدأ قبل "upto" → نجمد الوقت من pauseStart لحد دلوقتي
+        final pauseEnd = upto.isAfter(s.pauseStart!) ? upto : s.pauseStart!;
+        frozen += pauseEnd.difference(s.pauseStart!).inMinutes;
+      }
+
+      final consumed = totalSinceStart - frozen;
+      return consumed < 0 ? 0 : consumed;
+    }
 
     // استهلاك حتى نهاية اليوم (أو الآن إذا قبل نهاية اليوم)
     final upto = dayEnd.isBefore(now) ? dayEnd : now;
@@ -459,7 +512,7 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
     return overlap < 0 ? 0 : overlap;
   }
 
-  int _getMinutesConsumedTodaySub(Session s, DateTime now) {
+/*  int _getMinutesConsumedTodaySub(Session s, DateTime now) {
     if (s.type == 'حر') return 0;
 
     final dayStart = DateTime(now.year, now.month, now.day);
@@ -474,9 +527,50 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
       lastCheckpoint = s.lastDailySpentCheckpoint!;
     }
 
-    int spentMinutes = now.difference(lastCheckpoint).inMinutes;
+    int spentMinutes;
+
+    if (s.isPaused && s.pauseStart != null) {
+      // لو الجلسة متوقفة، نحسب فقط الوقت من lastCheckpoint حتى بداية التوقف
+      final effectiveNow = now.isBefore(s.pauseStart!) ? now : s.pauseStart!;
+      spentMinutes = effectiveNow.difference(lastCheckpoint).inMinutes;
+    } else {
+      spentMinutes = now.difference(lastCheckpoint).inMinutes;
+    }
+
     if (s.savedDailySpent != null) spentMinutes += s.savedDailySpent!;
 
+    s.savedDailySpent = spentMinutes;
+    s.lastDailySpentCheckpoint = now;
+
+    return spentMinutes;
+  }*/
+  int _getMinutesConsumedTodaySub(Session s, DateTime now) {
+    if (s.type == 'حر') return 0;
+
+    final dayStart = DateTime(now.year, now.month, now.day);
+
+    DateTime lastCheckpoint;
+    if (s.lastDailySpentCheckpoint == null) {
+      lastCheckpoint = s.runningSince ?? s.start;
+      if (lastCheckpoint.isBefore(dayStart)) lastCheckpoint = dayStart;
+      // ⚠️ لا تعيد ضبط savedDailySpent هنا!
+      s.savedDailySpent ??= 0;
+    } else {
+      lastCheckpoint = s.lastDailySpentCheckpoint!;
+    }
+
+    int spentMinutes;
+    if (s.isPaused && s.pauseStart != null) {
+      // نحسب فقط الوقت من lastCheckpoint حتى بداية التوقف
+      final effectiveNow = now.isBefore(s.pauseStart!) ? now : s.pauseStart!;
+      spentMinutes = effectiveNow.difference(lastCheckpoint).inMinutes;
+    } else {
+      spentMinutes = now.difference(lastCheckpoint).inMinutes;
+    }
+
+    spentMinutes += s.savedDailySpent ?? 0;
+
+    // تحديث القيم بدون مسحها
     s.savedDailySpent = spentMinutes;
     s.lastDailySpentCheckpoint = now;
 
@@ -496,7 +590,7 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
     return "$hours ساعة و $mins دقيقة";
   }
 
-  int getSessionMinutesSub(Session s) {
+  /*int getSessionMinutesSub(Session s) {
     final now = DateTime.now();
     if (s.type == 'حر') {
       int base = s.elapsedMinutesPayg;
@@ -511,9 +605,71 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
       final since = s.runningSince ?? s.start;
       return base + now.difference(since).inMinutes;
     }
+  }*/
+
+  int getSessionMinutesSub(Session s) {
+    final now = DateTime.now();
+
+    if (!s.isActive) {
+      // الجلسة خلصت أو اتقفلت
+      return s.type == 'حر' ? s.elapsedMinutesPayg : s.elapsedMinutes;
+    }
+
+    if (s.isPaused) {
+      // الجلسة متوقفة → رجّع الوقت المخزّن فقط
+      return s.type == 'حر' ? s.elapsedMinutesPayg : s.elapsedMinutes;
+    }
+
+    // شغالة → اجمع المخزن + الوقت من آخر تشغيل
+    final since = s.runningSince ?? s.start;
+    final diff = now.difference(since).inMinutes;
+    return (s.type == 'حر' ? s.elapsedMinutesPayg : s.elapsedMinutes) + diff;
   }
 
   Future<void> pauseSessionSub(Session s) async {
+    final now = DateTime.now();
+
+    if (!s.isPaused && s.isActive) {
+      final since = s.runningSince ?? s.start;
+      final diff = now.difference(since).inMinutes;
+
+      if (diff > 0) {
+        if (s.type == 'حر') {
+          s.elapsedMinutesPayg += diff;
+        } else {
+          s.elapsedMinutes += diff;
+        }
+      }
+
+      s.isPaused = true;
+      s.runningSince = null;
+      s.pauseStart = now;
+
+      s.addEvent('paused', meta: {'added': diff});
+      await SessionDb.updateSession(s);
+    }
+  }
+
+  /*Future<void> pauseSessionSub(Session s) async {
+    final now = DateTime.now();
+    if (!s.isPaused) {
+      final since = s.runningSince ?? s.start;
+      final diff = now.difference(since).inMinutes;
+
+      if (s.type == 'حر') {
+        s.elapsedMinutesPayg += diff;
+      } else {
+        s.elapsedMinutes += diff;
+      }
+
+      s.isPaused = true;
+      s.runningSince = null;
+      s.pauseStart = now; // ✅ مهم علشان ما يتحسبش وقت زيادة
+      await SessionDb.updateSession(s);
+    }
+  }*/
+
+  /*Future<void> pauseSessionSub(Session s) async {
     final now = DateTime.now();
     if (!s.isPaused) {
       final since = s.runningSince ?? s.start;
@@ -530,7 +686,30 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
       await SessionDb.updateSession(s);
     }
   }
+*/
 
+  Future<void> resumeSessionSub(Session s) async {
+    if (s.isPaused && s.isActive) {
+      final now = DateTime.now();
+
+      // احسب مدة التجميد لو الجلسة لها end
+      if (s.pauseStart != null && s.end != null) {
+        final frozen = now.difference(s.pauseStart!).inMinutes;
+        if (frozen > 0) {
+          s.end = s.end!.add(Duration(minutes: frozen));
+        }
+      }
+
+      s.isPaused = false;
+      s.pauseStart = null;
+      s.runningSince = now;
+
+      s.addEvent('resumed');
+      await SessionDb.updateSession(s);
+    }
+  }
+
+  /*
   Future<void> resumeSessionSub(Session s) async {
     if (s.isPaused) {
       s.isPaused = false;
@@ -538,6 +717,7 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
       await SessionDb.updateSession(s);
     }
   }
+*/
 
   DateTime? _getSubscriptionEndSub(Session s) {
     final plan = s.subscription;
@@ -1026,33 +1206,37 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
 
     */
     ////===========================
-    final filteredSessions =
-        _sessionsSub.where((s) {
-          final wasSubscriber =
-              s.subscription != null || s.savedSubscriptionJson != null;
+    return ValueListenableBuilder<List<Session>>(
+      valueListenable: SessionsNotifier.sessions,
+      builder: (context, sessions, _) {
+        final filteredSessions =
+            _sessionsSub.where((s) {
+              final wasSubscriber =
+                  s.subscription != null || s.savedSubscriptionJson != null;
 
-          if (s.end == null) return wasSubscriber;
+              if (s.end == null) return wasSubscriber;
 
-          final dayStart = DateTime(
-            _selectedDate.year,
-            _selectedDate.month,
-            _selectedDate.day,
-          );
-          final dayEnd = dayStart.add(const Duration(days: 1));
+              final dayStart = DateTime(
+                _selectedDate.year,
+                _selectedDate.month,
+                _selectedDate.day,
+              );
+              final dayEnd = dayStart.add(const Duration(days: 1));
 
-          final overlaps = s.start.isBefore(dayEnd) && s.end!.isAfter(dayStart);
+              final overlaps =
+                  s.start.isBefore(dayEnd) && s.end!.isAfter(dayStart);
 
-          // فلترة بالبحث
-          final matchesSearch = s.name.toLowerCase().contains(
-            _searchQuery.toLowerCase(),
-          );
+              // فلترة بالبحث
+              final matchesSearch = s.name.toLowerCase().contains(
+                _searchQuery.toLowerCase(),
+              );
 
-          return wasSubscriber && overlaps && matchesSearch;
-        }).toList();
+              return wasSubscriber && overlaps && matchesSearch;
+            }).toList();
 
-    ////==================================================================
+        ////==================================================================
 
-    /*  final filteredSessions =
+        /*  final filteredSessions =
         _sessions.where((s) {
           final isSubscriber = s.subscription != null; // مشترك فقط
 
@@ -1079,481 +1263,506 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
         }).toList();
 
 */
-    // الآن نعرض كل الجلسات (حتى اللي تحولت لحر)، لكن نميّزهم بصرياً.
-    final list =
-        _sessionsSub.toList()..sort((a, b) => a.name.compareTo(b.name));
+        // الآن نعرض كل الجلسات (حتى اللي تحولت لحر)، لكن نميّزهم بصرياً.
+        final list =
+            _sessionsSub.toList()..sort((a, b) => a.name.compareTo(b.name));
 
-    return Scaffold(
-      body:
-          _loading
-              ? const Center(child: CircularProgressIndicator())
-              : Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Row(
-                      children: [
-                        const Text(
-                          "عرض ليوم: ",
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton(
-                          child: Text(
-                            "${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}",
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white.withOpacity(
-                              0,
-                            ), // خلفية شفافة
-                            foregroundColor: Colors.white, // لون النص والأيقونة
-                            shadowColor: Colors.transparent, // إزالة الظل
-                            side: BorderSide(
-                              color: AppColorsDark.mainColor,
-                              width: 1.5,
-                            ), // البوردر
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(
-                                8,
-                              ), // تقويس الحواف
-                            ),
-                          ),
-                          onPressed: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: _selectedDate,
-                              firstDate: DateTime(2000),
-                              lastDate: DateTime(2100),
-                            );
-                            if (picked != null) {
-                              setState(() {
-                                _selectedDate = DateTime(
-                                  picked.year,
-                                  picked.month,
-                                  picked.day,
-                                );
-                              });
-                            }
-                          },
-                        ),
-
-                        const SizedBox(width: 12),
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white.withOpacity(
-                              0,
-                            ), // خلفية شفافة
-                            foregroundColor: Colors.white, // لون النص والأيقونة
-                            shadowColor: Colors.transparent, // إزالة الظل
-                            side: BorderSide(
-                              color: AppColorsDark.mainColor,
-                              width: 1.5,
-                            ), // البوردر
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(
-                                8,
-                              ), // تقويس الحواف
-                            ),
-                          ),
-                          onPressed:
-                              () => setState(
-                                () => _selectedDate = DateTime.now(),
+        return Scaffold(
+          body:
+              _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Row(
+                          children: [
+                            const Text(
+                              "عرض ليوم: ",
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
                               ),
-                          child: const Text("اليوم"),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              child: Text(
+                                "${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}",
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white.withOpacity(
+                                  0,
+                                ), // خلفية شفافة
+                                foregroundColor:
+                                    Colors.white, // لون النص والأيقونة
+                                shadowColor: Colors.transparent, // إزالة الظل
+                                side: BorderSide(
+                                  color: AppColorsDark.mainColor,
+                                  width: 1.5,
+                                ), // البوردر
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(
+                                    8,
+                                  ), // تقويس الحواف
+                                ),
+                              ),
+                              onPressed: () async {
+                                final picked = await showDatePicker(
+                                  context: context,
+                                  initialDate: _selectedDate,
+                                  firstDate: DateTime(2000),
+                                  lastDate: DateTime(2100),
+                                );
+                                if (picked != null) {
+                                  setState(() {
+                                    _selectedDate = DateTime(
+                                      picked.year,
+                                      picked.month,
+                                      picked.day,
+                                    );
+                                  });
+                                }
+                              },
+                            ),
+
+                            const SizedBox(width: 12),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white.withOpacity(
+                                  0,
+                                ), // خلفية شفافة
+                                foregroundColor:
+                                    Colors.white, // لون النص والأيقونة
+                                shadowColor: Colors.transparent, // إزالة الظل
+                                side: BorderSide(
+                                  color: AppColorsDark.mainColor,
+                                  width: 1.5,
+                                ), // البوردر
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(
+                                    8,
+                                  ), // تقويس الحواف
+                                ),
+                              ),
+                              onPressed:
+                                  () => setState(
+                                    () => _selectedDate = DateTime.now(),
+                                  ),
+                              child: const Text("اليوم"),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child:
-                        list.isEmpty
-                            ? const Center(child: Text('لا توجد جلسات'))
-                            : ListView.builder(
-                              itemCount: filteredSessions.length,
-                              itemBuilder: (ctx, i) {
-                                final s = filteredSessions[i];
+                      ),
+                      Expanded(
+                        child:
+                            list.isEmpty
+                                ? const Center(child: Text('لا توجد جلسات'))
+                                : ListView.builder(
+                                  itemCount: filteredSessions.length,
+                                  itemBuilder: (ctx, i) {
+                                    final s = filteredSessions[i];
 
-                                final plan =
-                                    s.subscription ??
-                                    (s.savedSubscriptionJson != null
-                                        ? SubscriptionPlan.fromJson(
-                                          jsonDecode(s.savedSubscriptionJson!),
-                                        )
-                                        : null);
+                                    final plan =
+                                        s.subscription ??
+                                        (s.savedSubscriptionJson != null
+                                            ? SubscriptionPlan.fromJson(
+                                              jsonDecode(
+                                                s.savedSubscriptionJson!,
+                                              ),
+                                            )
+                                            : null);
 
-                                // عدد الدقائق المسموح بها اليوم
-                                final allowedToday =
-                                    (plan != null &&
-                                            plan.dailyUsageType == 'limited' &&
-                                            plan.dailyUsageHours != null)
-                                        ? plan.dailyUsageHours! * 60
-                                        : -1; // -1 يعني لا حد يومي
+                                    // عدد الدقائق المسموح بها اليوم
+                                    final allowedToday =
+                                        (plan != null &&
+                                                plan.dailyUsageType ==
+                                                    'limited' &&
+                                                plan.dailyUsageHours != null)
+                                            ? plan.dailyUsageHours! * 60
+                                            : -1; // -1 يعني لا حد يومي
 
-                                // عدد الدقائق المستهلكة اليوم
+                                    // عدد الدقائق المستهلكة اليوم
 
-                                // هل وصل الحد اليومي؟
+                                    // هل وصل الحد اليومي؟
 
-                                // يمكن تفعيل زر الإيقاف فقط لو الجلسة نشطة والحد اليومي لم ينتهِ
+                                    // يمكن تفعيل زر الإيقاف فقط لو الجلسة نشطة والحد اليومي لم ينتهِ
 
-                                final isSub = plan != null;
-                                final endParts = formatEndDateParts(
-                                  _getSubscriptionEndSub(s),
-                                );
-                                final spentToday = _minutesOverlapWithDateSub(
-                                  s,
-                                  _selectedDate,
-                                );
-                                final isLimitReached =
-                                    isSub &&
-                                    allowedToday > 0 &&
-                                    spentToday >= allowedToday;
+                                    final isSub = plan != null;
+                                    final endParts = formatEndDateParts(
+                                      _getSubscriptionEndSub(s),
+                                    );
+                                    final spentToday =
+                                        _minutesOverlapWithDateSub(
+                                          s,
+                                          _selectedDate,
+                                        );
+                                    final isLimitReached =
+                                        isSub &&
+                                        allowedToday > 0 &&
+                                        spentToday >= allowedToday;
 
-                                final totalSoFar =
-                                    s.type == "باقة"
-                                        ? getSubscriptionMinutes(s)
-                                        : getSessionMinutesSub(s);
-                                final canPause = s.isActive && !isLimitReached;
-                                // DEBUG
-                                /*debugPrint(
+                                    final totalSoFar =
+                                        s.type == "باقة"
+                                            ? getSubscriptionMinutes(s)
+                                            : getSessionMinutesSub(s);
+                                    final canPause =
+                                        s.isActive && !isLimitReached;
+                                    // DEBUG
+                                    /*debugPrint(
   'DBG SESSION ${s.name} -> start=${s.start}, elapsedMinutesField=${s.elapsedMinutes}, '
   'totalSoFar=$totalSoFar, pauseStart=${s.pauseStart}, isPaused=${s.isPaused}, '
   'isActive=${s.isActive}, plan=$plan',
 );*/
 
-                                final remaining =
-                                    allowedToday > 0
-                                        ? (allowedToday - spentToday)
-                                        : -1;
+                                    final remaining =
+                                        allowedToday > 0
+                                            ? (allowedToday - spentToday)
+                                            : -1;
 
-                                final minutesToCharge =
-                                    ((totalSoFar - s.paidMinutes).clamp(
-                                      0,
-                                      totalSoFar > 0 ? totalSoFar : 0,
-                                    )).toInt();
-                                final isSubActive =
-                                    s.type == "باقة" && s.isActive;
-                                final canPauseButton =
-                                    isSubActive &&
-                                    canPause; // canPause حسب منطقك
+                                    final minutesToCharge =
+                                        ((totalSoFar - s.paidMinutes).clamp(
+                                          0,
+                                          totalSoFar > 0 ? totalSoFar : 0,
+                                        )).toInt();
+                                    final isSubActive =
+                                        s.type == "باقة" && s.isActive;
+                                    final canPauseButton =
+                                        isSubActive &&
+                                        canPause; // canPause حسب منطقك
 
-                                // badge
-                                final badge =
-                                    isSub
-                                        ? InkWell(
-                                          onTap: () {
-                                            print('تم الضغط على الباقة');
-                                          },
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                          child: Container(
-                                            width: 85, // يملأ كل العرض المتاح
-                                            height: 37,
-
-                                            decoration: BoxDecoration(
-                                              color: Colors.green.withOpacity(
-                                                0.1,
-                                              ), // لون الخلفية
+                                    // badge
+                                    final badge =
+                                        isSub
+                                            ? InkWell(
+                                              onTap: () {
+                                                print('تم الضغط على الباقة');
+                                              },
                                               borderRadius:
-                                                  BorderRadius.circular(
-                                                    8,
-                                                  ), // تقوس الحواف
-                                              border: Border.all(
-                                                color:
-                                                    Colors.green, // لون البوردر
-                                                width: 1, // سمك البوردر
-                                              ),
-                                            ),
-                                            child: const Center(
-                                              child: Text(
-                                                'باقة',
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 16,
-                                                  fontWeight: FontWeight.w500,
+                                                  BorderRadius.circular(8),
+                                              child: Container(
+                                                width:
+                                                    85, // يملأ كل العرض المتاح
+                                                height: 37,
+
+                                                decoration: BoxDecoration(
+                                                  color: Colors.green
+                                                      .withOpacity(
+                                                        0.1,
+                                                      ), // لون الخلفية
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                        8,
+                                                      ), // تقوس الحواف
+                                                  border: Border.all(
+                                                    color:
+                                                        Colors
+                                                            .green, // لون البوردر
+                                                    width: 1, // سمك البوردر
+                                                  ),
+                                                ),
+                                                child: const Center(
+                                                  child: Text(
+                                                    'باقة',
+                                                    style: TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 16,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                    ),
+                                                  ),
                                                 ),
                                               ),
-                                            ),
-                                          ),
-                                        )
-                                        : Chip(
-                                          label: Text('حر'),
-                                          backgroundColor: Colors.black,
-                                        );
+                                            )
+                                            : Chip(
+                                              label: Text('حر'),
+                                              backgroundColor: Colors.black,
+                                            );
 
-                                String stopButtonText = 'إيقاف';
-                                if (s.isActive && !s.isPaused) {
-                                  if (isSub &&
-                                      allowedToday > 0 &&
-                                      remaining > 0)
-                                    stopButtonText = 'إيقاف (هيكمل كباقة)';
-                                  else if (isSub)
-                                    stopButtonText = 'إيقاف (هيبدأ حر)';
-                                  else
-                                    stopButtonText = 'إيقاف';
-                                }
+                                    String stopButtonText = 'إيقاف';
+                                    if (s.isActive && !s.isPaused) {
+                                      if (isSub &&
+                                          allowedToday > 0 &&
+                                          remaining > 0)
+                                        stopButtonText = 'إيقاف (هيكمل كباقة)';
+                                      else if (isSub)
+                                        stopButtonText = 'إيقاف (هيبدأ حر)';
+                                      else
+                                        stopButtonText = 'إيقاف';
+                                    }
 
-                                return Card(
-                                  color: AppColorsDark.bgCardColor,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                    side: BorderSide(
-                                      color: AppColorsDark.mainColor
-                                          .withOpacity(0.4),
-                                      width: 1.5,
-                                    ),
-                                  ),
-                                  /* color:
+                                    return Card(
+                                      color: AppColorsDark.bgCardColor,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        side: BorderSide(
+                                          color: AppColorsDark.mainColor
+                                              .withOpacity(0.4),
+                                          width: 1.5,
+                                        ),
+                                      ),
+                                      /* color:
                                       (isSub &&
                                               s.end != null &&
                                               s.end!.isBefore(DateTime.now()))
                                           ? Colors.grey
                                           : null,*/
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16.0),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
+                                      margin: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 6,
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(16.0),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
                                           children: [
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Row(
+                                            Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment
+                                                      .spaceBetween,
+                                              children: [
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
                                                     children: [
-                                                      Text(
-                                                        s.name,
-                                                        style: const TextStyle(
-                                                          fontSize: 18,
-                                                          fontWeight:
-                                                              FontWeight.bold,
-                                                        ),
+                                                      Row(
+                                                        children: [
+                                                          Text(
+                                                            s.name,
+                                                            style:
+                                                                const TextStyle(
+                                                                  fontSize: 18,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .bold,
+                                                                ),
+                                                          ),
+                                                          const SizedBox(
+                                                            width: 10,
+                                                          ),
+                                                          badge,
+                                                          const SizedBox(
+                                                            width: 10,
+                                                          ),
+                                                          if (s.savedSubscriptionJson !=
+                                                              null)
+                                                            const Icon(
+                                                              Icons.bookmark,
+                                                              size: 22,
+                                                              color:
+                                                                  Colors
+                                                                      .transparent,
+                                                            ),
+                                                        ],
                                                       ),
-                                                      const SizedBox(width: 10),
-                                                      badge,
-                                                      const SizedBox(width: 10),
-                                                      if (s.savedSubscriptionJson !=
-                                                          null)
-                                                        const Icon(
-                                                          Icons.bookmark,
-                                                          size: 22,
-                                                          color:
-                                                              Colors
-                                                                  .transparent,
+                                                      const SizedBox(height: 6),
+                                                      if (allowedToday > 0)
+                                                        Text(
+                                                          allowedToday > 0
+                                                              ? 'حد الاستخدام اليومي: ${_formatMinutesSub(allowedToday)}'
+                                                              : 'حد الاستخدام اليومي: غير محدود',
+                                                        ),
+                                                      /* مدفوع: ${_formatMinutesSub(s.paidMinutes)}*/
+                                                      Text(
+                                                        'مضى وقت: ${getSessionFormattedTimeSub(s)}   ',
+                                                      ),
+                                                      if (isSub)
+                                                        /* Text(
+                                                      'تنتهي الباقة: ${_getSubscriptionEndSub(s)?.toLocal().toString().split('.').first ?? 'غير محددة'}',
+                                                    ),*/
+                                                        Row(
+                                                          children: [
+                                                            Text(
+                                                              'تنتهي الباقة في يوم: ${endParts?['date'] ?? 'غير محدد'}',
+                                                            ),
+                                                            const SizedBox(
+                                                              width: 8,
+                                                            ),
+                                                            Text(
+                                                              'وعند الساعة: ${endParts?['time'] ?? 'غير محدد'}',
+                                                            ),
+                                                          ],
                                                         ),
                                                     ],
                                                   ),
-                                                  const SizedBox(height: 6),
-                                                  if (allowedToday > 0)
-                                                    Text(
-                                                      allowedToday > 0
-                                                          ? 'حد الاستخدام اليومي: ${_formatMinutesSub(allowedToday)}'
-                                                          : 'حد الاستخدام اليومي: غير محدود',
-                                                    ),
-                                                  /* مدفوع: ${_formatMinutesSub(s.paidMinutes)}*/
-                                                  Text(
-                                                    'مضى وقت: ${getSessionFormattedTimeSub(s)}   ',
-                                                  ),
-                                                  if (isSub)
-                                                    /* Text(
-                                                      'تنتهي الباقة: ${_getSubscriptionEndSub(s)?.toLocal().toString().split('.').first ?? 'غير محددة'}',
-                                                    ),*/
-                                                    Row(
-                                                      children: [
-                                                        Text(
-                                                          'تنتهي الباقة في يوم: ${endParts?['date'] ?? 'غير محدد'}',
-                                                        ),
-                                                        const SizedBox(
-                                                          width: 8,
-                                                        ),
-                                                        Text(
-                                                          'وعند الساعة: ${endParts?['time'] ?? 'غير محدد'}',
-                                                        ),
-                                                      ],
-                                                    ),
-                                                ],
-                                              ),
-                                            ),
-                                            Row(
-                                              children: [
-                                                // 👇 لو الاشتراك انتهى
-                                                if (s.end != null &&
-                                                    DateTime.now().isAfter(
-                                                      s.end!,
-                                                    )) ...[
-                                                  CustomButton(
-                                                    color: Colors.orange,
-                                                    text: "تجديد الباقة",
-                                                    onPressed: () async {
-                                                      // هنا تعمل منطق تجديد الباقة (مثلاً ترجع الاشتراك القديم أو تفتح شاشة اختيار خطة جديدة)
-                                                      await _renewSubscription(
-                                                        s,
-                                                      );
-                                                      if (mounted)
-                                                        setState(() {});
-                                                    },
-                                                    infinity: false,
-                                                  ),
-                                                ] else ...[
-                                                  // زر استئناف باقة (لو محفوظة + في يوم جديد)
-                                                  if (s.savedSubscriptionJson !=
-                                                      null) ...[
-                                                    if (s.savedSubscriptionConvertedAt !=
-                                                        null)
-                                                      if (!_isSameDay(
-                                                        s.savedSubscriptionConvertedAt!,
-                                                        DateTime.now(),
-                                                      ))
-                                                        CustomButton(
-                                                          infinity: false,
-                                                          color: Colors.green,
-                                                          text: 'كمل باقتك',
-                                                          onPressed:
-                                                              () =>
-                                                                  _restoreSavedSubscription(
-                                                                    s,
-                                                                  ),
-                                                        ),
-                                                  ],
-
-                                                  const SizedBox(width: 10),
-                                                  CustomButton(
-                                                    infinity: false,
-                                                    border:
-                                                        s.isPaused
-                                                            ? false
-                                                            : true,
-                                                    color: Colors.transparent,
-                                                    text:
-                                                        s.isPaused
-                                                            ? 'استكمال الوقت'
-                                                            : 'إيقاف مؤقت',
-                                                    onPressed:
-                                                        canPauseButton
-                                                            ? () async {
-                                                              final now =
-                                                                  DateTime.now();
-
-                                                              if (!s.isPaused) {
-                                                                // Pause الباقة
-                                                                final from =
-                                                                    s.runningSince ??
-                                                                    s.start;
-                                                                final consumed =
-                                                                    now
-                                                                        .difference(
-                                                                          from,
-                                                                        )
-                                                                        .inMinutes;
-                                                                if (consumed >
-                                                                    0)
-                                                                  s.elapsedMinutes +=
-                                                                      consumed;
-
-                                                                s.isPaused =
-                                                                    true;
-                                                                s.pauseStart =
-                                                                    now;
-                                                                s.runningSince =
-                                                                    null;
-
-                                                                await _saveSessionWithEvent(
-                                                                  s,
-                                                                  'paused',
-                                                                  meta: {
-                                                                    'consumedAdded':
-                                                                        consumed,
-                                                                  },
-                                                                );
-                                                              } else {
-                                                                // Resume الباقة
-                                                                int frozen = 0;
-                                                                if (s.pauseStart !=
-                                                                    null) {
-                                                                  frozen =
-                                                                      now
-                                                                          .difference(
-                                                                            s.pauseStart!,
-                                                                          )
-                                                                          .inMinutes;
-                                                                  if (s.end !=
-                                                                      null)
-                                                                    s.end = s.end!.add(
-                                                                      Duration(
-                                                                        minutes:
-                                                                            frozen,
+                                                ),
+                                                Row(
+                                                  children: [
+                                                    // 👇 لو الاشتراك انتهى
+                                                    if (s.end != null &&
+                                                        DateTime.now().isAfter(
+                                                          s.end!,
+                                                        )) ...[
+                                                      CustomButton(
+                                                        color: Colors.orange,
+                                                        text: "تجديد الباقة",
+                                                        onPressed: () async {
+                                                          // هنا تعمل منطق تجديد الباقة (مثلاً ترجع الاشتراك القديم أو تفتح شاشة اختيار خطة جديدة)
+                                                          await _renewSubscription(
+                                                            s,
+                                                          );
+                                                          if (mounted)
+                                                            setState(() {});
+                                                        },
+                                                        infinity: false,
+                                                      ),
+                                                    ] else ...[
+                                                      // زر استئناف باقة (لو محفوظة + في يوم جديد)
+                                                      if (s.savedSubscriptionJson !=
+                                                          null) ...[
+                                                        if (s.savedSubscriptionConvertedAt !=
+                                                            null)
+                                                          if (!_isSameDay(
+                                                            s.savedSubscriptionConvertedAt!,
+                                                            DateTime.now(),
+                                                          ))
+                                                            CustomButton(
+                                                              infinity: false,
+                                                              color:
+                                                                  Colors.green,
+                                                              text: 'كمل باقتك',
+                                                              onPressed:
+                                                                  () =>
+                                                                      _restoreSavedSubscription(
+                                                                        s,
                                                                       ),
+                                                            ),
+                                                      ],
+
+                                                      const SizedBox(width: 10),
+                                                      CustomButton(
+                                                        infinity: false,
+                                                        border:
+                                                            s.isPaused
+                                                                ? false
+                                                                : true,
+                                                        color:
+                                                            Colors.transparent,
+                                                        text:
+                                                            s.isPaused
+                                                                ? 'استكمال الوقت'
+                                                                : 'إيقاف مؤقت',
+                                                        onPressed:
+                                                            canPauseButton
+                                                                ? () async {
+                                                                  final now =
+                                                                      DateTime.now();
+
+                                                                  if (!s
+                                                                      .isPaused) {
+                                                                    // Pause الباقة
+                                                                    final from =
+                                                                        s.runningSince ??
+                                                                        s.start;
+                                                                    final consumed =
+                                                                        now
+                                                                            .difference(
+                                                                              from,
+                                                                            )
+                                                                            .inMinutes;
+                                                                    if (consumed >
+                                                                        0)
+                                                                      s.elapsedMinutes +=
+                                                                          consumed;
+
+                                                                    s.isPaused =
+                                                                        true;
+                                                                    s.pauseStart =
+                                                                        now;
+                                                                    s.runningSince =
+                                                                        null;
+
+                                                                    await _saveSessionWithEvent(
+                                                                      s,
+                                                                      'paused',
+                                                                      meta: {
+                                                                        'consumedAdded':
+                                                                            consumed,
+                                                                      },
+                                                                    );
+                                                                  } else {
+                                                                    // Resume الباقة
+                                                                    int frozen =
+                                                                        0;
+                                                                    if (s.pauseStart !=
+                                                                        null) {
+                                                                      frozen =
+                                                                          now
+                                                                              .difference(
+                                                                                s.pauseStart!,
+                                                                              )
+                                                                              .inMinutes;
+                                                                      if (s.end !=
+                                                                          null)
+                                                                        s.end = s.end!.add(
+                                                                          Duration(
+                                                                            minutes:
+                                                                                frozen,
+                                                                          ),
+                                                                        );
+                                                                    }
+
+                                                                    s.isPaused =
+                                                                        false;
+                                                                    s.pauseStart =
+                                                                        null;
+                                                                    s.runningSince =
+                                                                        now;
+
+                                                                    await _saveSessionWithEvent(
+                                                                      s,
+                                                                      'resumed',
+                                                                      meta: {
+                                                                        'frozenMinutesAdded':
+                                                                            frozen,
+                                                                      },
+                                                                    );
+                                                                  }
+
+                                                                  await SessionDb.updateSession(
+                                                                    s,
+                                                                  );
+                                                                  if (mounted)
+                                                                    setState(
+                                                                      () {},
                                                                     );
                                                                 }
+                                                                : null,
+                                                      ),
+                                                      SizedBox(width: 6),
+                                                      s.isActive
+                                                          ? CustomButton(
+                                                            infinity: false,
+                                                            text: " اضف منتجات",
+                                                            onPressed: () async {
+                                                              final selectedSession =
+                                                                  s;
 
-                                                                s.isPaused =
-                                                                    false;
-                                                                s.pauseStart =
-                                                                    null;
-                                                                s.runningSince =
-                                                                    now;
-
-                                                                await _saveSessionWithEvent(
-                                                                  s,
-                                                                  'resumed',
-                                                                  meta: {
-                                                                    'frozenMinutesAdded':
-                                                                        frozen,
-                                                                  },
-                                                                );
-                                                              }
-
-                                                              await SessionDb.updateSession(
-                                                                s,
+                                                              await showModalBottomSheet(
+                                                                context:
+                                                                    context,
+                                                                isScrollControlled:
+                                                                    true,
+                                                                builder:
+                                                                    (
+                                                                      _,
+                                                                    ) => _buildAddProductsAndPay(
+                                                                      selectedSession,
+                                                                    ),
                                                               );
-                                                              if (mounted)
-                                                                setState(() {});
-                                                            }
-                                                            : null,
-                                                  ),
-                                                  SizedBox(width: 6),
-                                                  s.isActive
-                                                      ? CustomButton(
-                                                        infinity: false,
-                                                        text: " اضف منتجات",
-                                                        onPressed: () async {
-                                                          final selectedSession =
-                                                              s;
 
-                                                          await showModalBottomSheet(
-                                                            context: context,
-                                                            isScrollControlled:
-                                                                true,
-                                                            builder:
-                                                                (
-                                                                  _,
-                                                                ) => _buildAddProductsAndPay(
-                                                                  selectedSession,
-                                                                ),
-                                                          );
+                                                              setState(() {
+                                                                _filteredSessionsSup =
+                                                                    _sessionsSub;
+                                                              });
+                                                            },
+                                                          )
+                                                          : const SizedBox.shrink(),
 
-                                                          setState(() {
-                                                            _filteredSessionsSup =
-                                                                _sessionsSub;
-                                                          });
-                                                        },
-                                                      )
-                                                      : const SizedBox.shrink(),
-
-                                                  // زر البدء/ايقاف الموحد يتصرف بحسب نوع الجلسة
-                                                  /* ElevatedButton(
+                                                      // زر البدء/ايقاف الموحد يتصرف بحسب نوع الجلسة
+                                                      /* ElevatedButton(
                                                     onPressed:
                                                         canPauseButton
                                                             ? () async {
@@ -1643,7 +1852,7 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                                                     ),
                                                   ),*/
 
-                                                  /*     const SizedBox(width: 6),
+                                                      /*     const SizedBox(width: 6),
 
                                                   ElevatedButton(
                                                     onPressed: () {
@@ -1666,24 +1875,26 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                                                     },
 
                                                     */
-                                                  /* _showReceiptDialog(s),*/
-                                                  /*
+                                                      /* _showReceiptDialog(s),*/
+                                                      /*
                                                     child: const Text("تفاصيل"),
                                                   ),*/
-                                                ],
+                                                    ],
+                                                  ],
+                                                ),
                                               ],
                                             ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 8),
-                                        // بدل الشرط الحالي
-                                        if (_getSubscriptionProgress(s) !=
-                                                null &&
-                                            s.end != null &&
-                                            s.end!.isAfter(DateTime.now())) ...[
-                                          const SizedBox(height: 6),
-                                          /*      */
-                                          /* LinearProgressIndicator(
+                                            const SizedBox(height: 8),
+                                            // بدل الشرط الحالي
+                                            if (_getSubscriptionProgress(s) !=
+                                                    null &&
+                                                s.end != null &&
+                                                s.end!.isAfter(
+                                                  DateTime.now(),
+                                                )) ...[
+                                              const SizedBox(height: 6),
+                                              /*      */
+                                              /* LinearProgressIndicator(
                                             value: _getSubscriptionProgress(s),
                                             backgroundColor: Colors.grey[300],
                                             color: Colors.blueAccent,
@@ -1705,7 +1916,7 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                                             ),
                                             minHeight: 8,
                                           ),*/
-                                          /*
+                                              /*
                                           Text(
                                             "${((_getSubscriptionProgress(s)! * 100).toStringAsFixed(0))}%",
                                             style: const TextStyle(
@@ -1767,32 +1978,38 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                                               ),
                                             ],
                                           ),*/
-                                        ] else ...[
-                                          // هنا يظهر مكانهم كلمة expired
-                                          const Padding(
-                                            padding: EdgeInsets.all(8.0),
-                                            child: Text(
-                                              '⛔ انتهت الباقة ',
-                                              style: TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.red,
+                                            ] else ...[
+                                              // هنا يظهر مكانهم كلمة expired
+                                              const Padding(
+                                                padding: EdgeInsets.all(8.0),
+                                                child: Text(
+                                                  '⛔ انتهت الباقة ',
+                                                  style: TextStyle(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Colors.red,
+                                                  ),
+                                                ),
                                               ),
-                                            ),
-                                          ),
-                                        ],
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+        );
+      },
     );
   }
 
+  // Future<void> _loadSessionsSub() async {
+  //    final data = await SessionDb.getSessions();
+  //    SessionsNotifier.sessions.value = data;
+  //  }
   double _drawerBalance = 0.0;
   Future<void> _loadDrawerBalance() async {
     try {

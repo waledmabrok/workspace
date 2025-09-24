@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'package:flutter/material.dart';
 import 'package:workspace/screens/cashier/user_Subscripe.dart';
@@ -7,10 +8,8 @@ import 'package:workspace/utils/colors.dart';
 import '../../core/Db_helper.dart';
 import '../../core/FinanceDb.dart';
 import '../../core/NotificationsDb.dart';
-import '../../core/db_helper_Subscribe.dart';
 import '../../core/db_helper_cart.dart';
 import '../../core/db_helper_customers.dart';
-import '../../core/db_helper_discounts.dart';
 import '../../core/models.dart';
 import '../../core/data_service.dart';
 import '../../core/db_helper_sessions.dart';
@@ -18,7 +17,6 @@ import 'dart:async';
 
 import '../../core/product_db.dart';
 import '../../widget/buttom.dart';
-import '../../widget/dialog.dart';
 import '../../widget/dropDown.dart';
 import '../../widget/form.dart';
 import '../admin/CustomerSubscribe.dart';
@@ -59,6 +57,7 @@ class _CashierScreenState extends State<CashierScreen>
   Timer? _timer;
   int _unseenExpiringCount = 0;
 
+  Timer? _badgeTimer;
   // 🟢 الخصم
   Discount? _appliedDiscount;
   final TextEditingController _discountCodeCtrl = TextEditingController();
@@ -311,7 +310,7 @@ class _CashierScreenState extends State<CashierScreen>
 
     // حدث الواجهة: أعادة تحميل الجلسات
     await _loadSessionsSub();
-
+    await _subsKey.currentState?.reloadData();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('تم إنشاء جلسة حر جديدة من الباقة')),
@@ -377,12 +376,12 @@ class _CashierScreenState extends State<CashierScreen>
     });
   }
 
-  Timer? _badgeTimer;
   Timer? _drawerBalanc;
   Customer? _currentCustomer;
   @override
   void initState() {
     super.initState();
+    WakelockPlus.enable();
     _tabController = TabController(length: 3, vsync: this); // عدّد التابات
     _loadCurrentShift();
     _currentCustomer = AdminDataService.instance.customers.firstWhereOrNull(
@@ -403,18 +402,126 @@ class _CashierScreenState extends State<CashierScreen>
     _timer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
     });
-    _badgeTimer = Timer.periodic(Duration(seconds: 1), (_) {
-      _updateExpiringFlags();
+    _badgeTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _loadBadge();
+    });
+    _loadBadge();
+    _checkExpiring(); // أول مرة
+    _expiringTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      _checkExpiring(); // كل دقيقة يعمل فحص + يحدث الرقم
     });
   }
 
   @override
   void dispose() {
     _badgeTimer?.cancel();
+    _expiringTimer?.cancel();
     _timer?.cancel();
     _autoStopTimer?.cancel();
     _discountCodeCtrl.dispose();
+
     super.dispose();
+  }
+
+  //==================Notification=======================
+  Timer? _expiringTimer;
+  List<Session> expiring = [];
+  List<Session> expired = [];
+  List<Session> dailyLimitReached = []; // ← هنا تعريفه كمتغير عضو
+
+  Future<void> _checkExpiring() async {
+    final now = DateTime.now();
+    final e = <Session>[];
+    final x = <Session>[];
+    final daily = <Session>[];
+
+    for (var s in _sessions) {
+      if (s.subscription == null) continue;
+
+      // منتهية
+      if (s.end != null && now.isAfter(s.end!)) {
+        await _notifyExpired(s);
+        x.add(s);
+        await _loadBadge(); // تحديث الرقم فورًا
+      }
+      // هتنتهي خلال أقل من ساعة
+      else if (s.end != null && s.end!.difference(now).inMinutes <= 58) {
+        await _notifyExpiring(s);
+        e.add(s);
+        await _loadBadge();
+      }
+
+      // تعدي الحد اليومي
+      if (s.subscription!.dailyUsageType == 'limited' &&
+          s.subscription!.dailyUsageHours != null) {
+        final spentToday = _minutesOverlapWithDateSub(s, now);
+        final allowedToday = s.subscription!.dailyUsageHours! * 60;
+        if (spentToday >= allowedToday) {
+          await _notifyDailyLimit(s);
+          daily.add(s);
+          await _loadBadge();
+        }
+      }
+    }
+
+    setState(() {
+      expiring = e;
+      expired = x;
+      dailyLimitReached = daily;
+    });
+  }
+
+  Future<void> _notifyExpired(Session s) async {
+    final exists = await NotificationsDb.exists(s.id, 'expired');
+    if (!exists) {
+      await NotificationsDb.insertNotification(
+        NotificationItem(
+          sessionId: s.id,
+          type: 'expired',
+          message: 'انتهى الاشتراك ${s.name}',
+        ),
+      );
+      s.expiredNotified = true; // تحديث الفلاج
+    }
+  }
+
+  Future<void> _notifyExpiring(Session s) async {
+    final exists = await NotificationsDb.exists(s.id, 'expiring');
+    if (!exists) {
+      await NotificationsDb.insertNotification(
+        NotificationItem(
+          sessionId: s.id,
+          type: 'expiring',
+          message: 'الاشتراك ${s.name} هينتهي قريب',
+        ),
+      );
+      s.expiringNotified = true; // تحديث الفلاج
+    }
+  }
+
+  Future<void> _notifyDailyLimit(Session s) async {
+    final exists = await NotificationsDb.exists(s.id, 'dailyLimit');
+    if (!exists) {
+      await NotificationsDb.insertNotification(
+        NotificationItem(
+          sessionId: s.id,
+          type: 'dailyLimit',
+          message: 'العميل ${s.name} استهلك الحد اليومي',
+        ),
+      );
+      s.dailyLimitNotified = true; // تحديث الفلاج
+    }
+  }
+
+  ///============================================================================
+  int _badgeCount = 0;
+  Future<void> _loadBadge() async {
+    final count = await NotificationsDb.getUnreadCount();
+    if (mounted) {
+      setState(() {
+        _badgeCount = count;
+      });
+    }
   }
 
   Future<void> _loadSessions() async {
@@ -446,36 +553,6 @@ class _CashierScreenState extends State<CashierScreen>
     });
   }
 
-  Future<void> _loadSessions2() async {
-    final data = await SessionDb.getSessions();
-
-    setState(() {
-      _tabController.animateTo(1);
-      _filteredSessions = _sessions;
-    });
-  }
-
-  /*
-  Future<void> _loadSessions() async {
-    final data = await SessionDb.getSessions();
-
-    // جلب الكارت لكل جلسة
-    for (var s in data) {
-      try {
-        s.cart = await CartDb.getCartBySession(s.id);
-      } catch (_) {}
-    }
-
-    setState(() {
-      // حدث المتغيرات أولاً
-      _sessions = data;
-      _filteredSessions = List.from(data);
-    });
-
-    _handleDuplicateSessions();
-  }
-*/
-
   int getSessionMinutes(Session s) {
     // invariant:
     // - s.elapsedMinutes = مجموع دقائق الفترات المنتهية سابقاً
@@ -488,15 +565,6 @@ class _CashierScreenState extends State<CashierScreen>
     }
   }
 
-  /*int getSessionMinutes(Session s) {
-    if (s.isPaused) {
-      return s.elapsedMinutes;
-    } else {
-      return s.elapsedMinutes +
-          DateTime.now().difference(s.pauseStart ?? s.start).inMinutes;
-    }
-  }*/
-
   double _calculateTimeChargeFromMinutes(int minutes) {
     final settings = AdminDataService.instance.pricingSettings;
     if (minutes <= settings.firstFreeMinutes) return 0;
@@ -508,58 +576,6 @@ class _CashierScreenState extends State<CashierScreen>
     if (amount > settings.dailyCap) amount = settings.dailyCap;
 
     return amount;
-  }
-
-  // ✅ التحقق من الكود
-  Future<String?> _applyDiscountByCode(String code) async {
-    code = code.trim();
-    if (code.isEmpty) return "أدخل كود أولاً";
-
-    final disc = AdminDataService.instance.discounts.firstWhereOrNull(
-      (d) => d.code.toLowerCase() == code.toLowerCase(),
-    );
-
-    if (disc == null) return "الكود غير موجود";
-
-    final now = DateTime.now();
-
-    // ✅ تحقق من الصلاحية
-    if (disc.expiry != null && disc.expiry!.isBefore(now)) {
-      return "الكود منتهي";
-    }
-
-    // ✅ تحقق من شرط الاستخدام لمرة واحدة
-    if (disc.singleUse && disc.used) {
-      return "الكود تم استخدامه بالفعل";
-    }
-
-    // 🟢 طبّق الخصم
-    setState(() {
-      _appliedDiscount = disc;
-    });
-
-    // ✅ لو الخصم لمرة واحدة → نعلّم انه استُخدم
-    if (disc.singleUse) {
-      final updated = Discount(
-        id: disc.id,
-        code: disc.code,
-        percent: disc.percent,
-        expiry: disc.expiry,
-        singleUse: disc.singleUse,
-        used: true, // 🟢 نعلّم انه اتطبق
-      );
-      await DiscountDb.update(updated);
-
-      // كمان حدّث نسخة الميموري (AdminDataService)
-      final idx = AdminDataService.instance.discounts.indexWhere(
-        (d) => d.id == disc.id,
-      );
-      if (idx != -1) {
-        AdminDataService.instance.discounts[idx] = updated;
-      }
-    }
-
-    return null; // يعني ناجح
   }
 
   final TextEditingController _phoneCtrl = TextEditingController();
@@ -592,245 +608,6 @@ class _CashierScreenState extends State<CashierScreen>
     } catch (_) {}
     return newCustomer;
   }
-
-  /*  // الدالة المحسنة _startSession
-  void _startSession() async {
-    final name = _nameCtrl.text.trim();
-    final phone = _phoneCtrl.text.trim();
-
-    if (name.isEmpty) {
-      // ممكن تعرض Snackbar أو تحط فوكاس على الحقل
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('رجاءً ضع اسم العميل')));
-      return;
-    }
-
-    // === تأكد/انشئ العميل ===
-    Customer? customer;
-    try {
-      customer = await _getOrCreateCustomer(name, phone.isEmpty ? null : phone);
-      _currentCustomer = customer;
-    } catch (e, st) {
-      debugPrint('Failed to get/create customer: $e\n$st');
-      // نمطياً نكمل بدون عميل مسجل (جلسة حر) لكن نعلّم المستخدم
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'فشل حفظ بيانات العميل، سيتم متابعة الجلسة بدون ربط عميل.',
-          ),
-        ),
-      );
-      customer = null;
-      _currentCustomer = null;
-    }
-
-    final now = DateTime.now();
-    DateTime? end;
-
-    SubscriptionPlan? currentPlan = _selectedPlan;
-
-    if (currentPlan != null) {
-      if (currentPlan.isUnlimited) {
-        end = null;
-      } else {
-        switch (currentPlan.durationType) {
-          case "hour":
-            end = now.add(Duration(hours: currentPlan.durationValue ?? 0));
-            break;
-          case "day":
-            end = now.add(Duration(days: currentPlan.durationValue ?? 0));
-            break;
-          case "week":
-            end = now.add(Duration(days: 7 * (currentPlan.durationValue ?? 0)));
-            break;
-          case "month":
-            end = DateTime(
-              now.year,
-              now.month + (currentPlan.durationValue ?? 0),
-              now.day,
-              now.hour,
-              now.minute,
-            );
-            break;
-        }
-      }
-    } else {
-      // جلسة حر
-      end = null;
-    }
-
-    final session = Session(
-      id: generateId(),
-      name: name,
-      start: now,
-      end: end,
-      subscription: currentPlan,
-      isActive: true,
-      isPaused: false,
-      elapsedMinutes: 0,
-      cart: [],
-      amountPaid: 0.0,
-      type: currentPlan != null ? "باقة" : "حر",
-      savedDailySpent: 0,
-      lastDailySpentCheckpoint: now,
-      // لو موديل Session عنده customerId أو customer حطّه هنا لو متاح:
-      // customerId: customer?.id,
-    );
-
-    // لو فيه خطة اشتراك — اعمل عملية بيع سريعة
-    if (currentPlan != null) {
-      final basePrice = currentPlan.price;
-      final discountPercent = _appliedDiscount?.percent ?? 0.0;
-      final discountValue = basePrice * (discountPercent / 100);
-      final finalPrice = basePrice - discountValue;
-      final paid = await showSubscriptionPaymentDialog(
-        context,
-        customer: customer!,
-        currentPlan: currentPlan,
-        basePrice: basePrice,
-        discountPercent: discountPercent,
-      );
-
-      if (paid != true) {
-        // لو لغى الدفع → متعملش Session أصلاً
-        return;
-      }
-      session.amountPaid = finalPrice;
-
-      final sale = Sale(
-        id: generateId(),
-        description:
-            'اشتراك ${currentPlan.name} للعميل ${name}'
-            '${_appliedDiscount != null ? " (خصم ${_appliedDiscount!.percent}%)" : ""}',
-        amount: finalPrice,
-      );
-
-      try {
-        await AdminDataService.instance.addSale(
-          sale,
-          paymentMethod: 'cash',
-          customer: customer,
-          updateDrawer: true,
-        );
-
-        // 🟢 هنا نطبع/نعرض تفاصيل الباقة
-        final nowStr = now.toLocal().toString();
-        final endStr = end?.toLocal().toString() ?? "غير محدود";
-
-        String durationInfo;
-        switch (currentPlan.durationType) {
-          case "hour":
-            durationInfo = "تنتهي بعد ${currentPlan.durationValue} ساعة";
-            break;
-          case "day":
-            durationInfo = "تنتهي بعد ${currentPlan.durationValue} يوم";
-            break;
-          case "week":
-            durationInfo = "تنتهي بعد ${currentPlan.durationValue} أسبوع";
-            break;
-          case "month":
-            durationInfo = "تنتهي بعد ${currentPlan.durationValue} شهر";
-            break;
-          default:
-            durationInfo = currentPlan.isUnlimited ? "غير محدودة" : "غير معروف";
-        }
-
-        // لو عندك حد يومي
-        String dailyLimitInfo = "";
-        if (currentPlan.dailyUsageType == "limited") {
-          dailyLimitInfo =
-              "\nحد الاستخدام اليومي: ${currentPlan.dailyUsageHours} دقيقة";
-        }
-
-        debugPrint("""
-====== تفاصيل الاشتراك ======
-العميل: $name
-الباقة: ${currentPlan.name}
-السعر الأساسي: $basePrice ج
-الخصم: $discountPercent% ($discountValue ج)
-المطلوب: $finalPrice ج
-بدأت: $nowStr
-${durationInfo != "" ? "المدة: $durationInfo" : ""}
-تنتهي: $endStr
-$dailyLimitInfo
-=============================
-""");
-
-        // ممكن تعرضها كـ Dialog بدل الطباعة:
-        */ /*     await showDialog(
-          context: context,
-          builder:
-              (_) => AlertDialog(
-                title: Text("تفاصيل اشتراك ${currentPlan.name}"),
-                content: Text(
-                  "العميل: $name\n"
-                  "السعر: ${finalPrice.toStringAsFixed(2)} ج\n"
-                  "بدأت: $nowStr\n"
-                  "تنتهي: $endStr\n"
-                  "$durationInfo\n"
-                  "$dailyLimitInfo",
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text("تمام"),
-                  ),
-                ],
-              ),
-        );*/ /*
-
-        _subsKey.currentState?.reloadData();
-
-        // 🔻 باقي الكود كما هو
-        if (_appliedDiscount?.singleUse == true) {
-          AdminDataService.instance.discounts.removeWhere(
-            (d) => d.id == _appliedDiscount!.id,
-          );
-          _appliedDiscount = null;
-        }
-
-        await _loadDrawerBalance();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'تم دفع اشتراك ${currentPlan.name} (${finalPrice.toStringAsFixed(2)} ج)',
-            ),
-          ),
-        );
-      } catch (e, st) {
-        debugPrint('Failed to process quick sale: $e\n$st');
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('فشل تسجيل الدفعة — حاول مرة أخرى')),
-        );
-      }
-    }
-
-    // حفظ الجلسة في DB و تحديث الواجهة
-    await SessionDb.insertSession(session);
-
-    setState(() {
-      _sessions.insert(0, session);
-      if (_searchCtrl.text.isEmpty) {
-        _filteredSessions = _sessions;
-      } else {
-        _filteredSessions =
-            _sessions
-                .where(
-                  (s) => s.name.toLowerCase().contains(
-                    _searchCtrl.text.toLowerCase(),
-                  ),
-                )
-                .toList();
-      }
-
-      _nameCtrl.clear();
-      _phoneCtrl.clear();
-      _selectedPlan = null;
-      _appliedDiscount = null;
-      _discountCodeCtrl.clear();
-    });
-  }*/
 
   void _startSession() async {
     final name = _nameCtrl.text.trim();
@@ -960,11 +737,8 @@ $dailyLimitInfo
 
     // حفظ الجلسة في DB
     await SessionDb.insertSession(session);
-
+    await _subsKey.currentState?.reloadData();
     // تحديث AdminSubscribersPagee مباشرة بدون reload كامل
-    _subsKey.currentState?.setState(() {
-      _sessions.insert(0, session);
-    });
 
     // تحديث الواجهة الحالية
     setState(() {
@@ -986,6 +760,16 @@ $dailyLimitInfo
       _appliedDiscount = null;
       _discountCodeCtrl.clear();
     });
+    /* final current = List<Session>.from(SessionsNotifier.sessions.value);
+    current.insert(0, session);
+    SessionsNotifier.sessions.value = current;
+
+    // تنظيف الحقول
+    _nameCtrl.clear();
+    _phoneCtrl.clear();
+    _selectedPlan = null;
+    _appliedDiscount = null;
+    _discountCodeCtrl.clear();*/
   }
 
   Future<bool?> showSubscriptionPaymentDialog(
@@ -1194,170 +978,6 @@ $dailyLimitInfo
     return plan.dailyUsageHours! * 60; // تحويل ساعات إلى دقائق
   }
 
-  /*Widget _buildAddProductsAndPay(Session s) {
-    Product? selectedProduct;
-    TextEditingController qtyCtrl = TextEditingController(text: '1');
-
-    return StatefulBuilder(
-      builder: (context, setSheetState) {
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Dropdown لاختيار المنتج
-              DropdownButtonFormField<Product>(
-                value: selectedProduct,
-                hint: const Text(
-                  'اختر منتج/مشروب',
-                  style: TextStyle(color: Colors.white70),
-                ),
-                dropdownColor: Colors.grey[850],
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: AppColorsDark.bgCardColor,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 14,
-                  ),
-                ),
-                items:
-                    AdminDataService.instance.products.map((p) {
-                      return DropdownMenuItem(
-                        value: p,
-                        child: Text(
-                          '${p.name} (${p.price} ج)',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      );
-                    }).toList(),
-                onChanged: (val) {
-                  setSheetState(() => selectedProduct = val);
-                },
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: CustomFormField(hint: "عدد", controller: qtyCtrl),
-                  ),
-                  const SizedBox(width: 8),
-
-                  CustomButton(
-                    text: "اضف",
-                    onPressed: () async {
-                      final qty = int.tryParse(_qtyCtrl.text) ?? 1;
-                      if (_selectedProduct != null) {
-                        sellProduct(_selectedProduct!, qty);
-                      }
-                      if (selectedProduct != null) {
-                        await sellProduct(selectedProduct!, qty); // خصم المخزون
-
-                        final item = CartItem(
-                          id: generateId(),
-                          product: selectedProduct!,
-                          qty: qty,
-                        );
-
-                        await CartDb.insertCartItem(item, s.id);
-
-                        final updatedCart = await CartDb.getCartBySession(s.id);
-                        setSheetState(() => s.cart = updatedCart);
-                      }
-                    },
-                    infinity: false,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              // قائمة العناصر المضافة
-              ...s.cart.map((item) {
-                final qtyController = TextEditingController(
-                  text: item.qty.toString(),
-                );
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          item.product.name,
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 60,
-                        child: TextField(
-                          controller: qtyController,
-                          style: const TextStyle(color: Colors.white),
-                          keyboardType: TextInputType.number,
-                          onChanged: (val) async {
-                            item.qty = int.tryParse(val) ?? item.qty;
-                            await CartDb.updateCartItemQty(item.id, item.qty);
-                            setSheetState(() {});
-                          },
-                          decoration: InputDecoration(
-                            filled: true,
-                            fillColor: Colors.grey[800],
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 10,
-                            ),
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.redAccent),
-                        onPressed: () async {
-                          await CartDb.deleteCartItem(item.id);
-                          // إعادة الكمية للمخزون
-                          item.product.stock += item.qty;
-                          final idx = AdminDataService.instance.products
-                              .indexWhere((p) => p.id == item.product.id);
-                          if (idx != -1) {
-                            AdminDataService.instance.products[idx].stock =
-                                item.product.stock;
-                          }
-
-                          s.cart.remove(item);
-                          setSheetState(() {});
-                        },
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
-              const SizedBox(height: 12),
-
-              CustomButton(
-                text: "إتمام ودفع",
-                onPressed: () async {
-                  Navigator.pop(context);
-                  final qty = int.tryParse(qtyCtrl.text) ?? 1;
-                  if (selectedProduct != null) {
-                    await tryAddToCart(s, selectedProduct!, qty, setSheetState);
-                  }
-
-                  _completeAndPayForSession(s);
-                },
-                infinity: false,
-                color: Colors.green,
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }*/
   Widget _buildAddProductsAndPay(Session s) {
     Product? selectedProduct;
     TextEditingController qtyCtrl = TextEditingController(text: '1');
@@ -1932,51 +1552,35 @@ $dailyLimitInfo
         getExpiringSessions().length + getExpiredSessions().length;
   }
 
-  Future<void> _loadCurrentShift() async {
-    _currentShiftId = await getCurrentShiftId();
-    setState(() {});
-  }
+  ///-------------------------------Shift close===============
+  Map<String, dynamic>? _currentShift; // ✅ هنا عرفنا المتغير
 
-  Future<void> _openShift() async {
-    final cashierNameCtrl = TextEditingController();
+  Future<Map<String, dynamic>?> _loadCurrentShift() async {
+    final db = await DbHelper.instance.database;
+    final rows = await db.query('shifts', where: 'closedAt IS NULL', limit: 1);
+    if (rows.isEmpty) return null;
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder:
-          (_) => AlertDialog(
-            title: const Text('فتح شيفت جديد'),
-            content: TextField(
-              controller: cashierNameCtrl,
-              decoration: const InputDecoration(labelText: 'اسم الكاشير'),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('إلغاء'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('فتح شيفت'),
-              ),
-            ],
-          ),
+    final shift = rows.first;
+    final summary = await DbHelper.instance.getShiftSummary(
+      shift['id'] as String,
     );
 
-    if (confirmed != true) return;
+    final shiftData = {
+      "id": shift['id'],
+      "cashierName": shift['cashierName'],
+      "openedAt": shift['openedAt'],
+      "openingBalance": shift['openingBalance'],
+      "closingBalance": shift['closingBalance'],
+      "sales": summary['sales'],
+      "expenses": summary['expenses'],
+      "profit": summary['profit'],
+    };
 
-    final newShiftId = DateTime.now().millisecondsSinceEpoch.toString();
-    final db = await DbHelper.instance.database;
-    await db.insert("shifts", {
-      "id": newShiftId,
-      "cashierName": cashierNameCtrl.text,
-      "openedAt": DateTime.now().toIso8601String(),
-      "openingBalance": await getClosingBalance(),
-      "totalSales": 0.0,
-      "totalExpenses": 0.0,
+    setState(() {
+      _currentShift = shiftData;
     });
 
-    await _loadCurrentShift();
-    debugPrint("تم فتح شيفت باسم ${cashierNameCtrl.text}");
+    return shiftData;
   }
 
   Future<String?> getCurrentShiftId() async {
@@ -2013,169 +1617,45 @@ $dailyLimitInfo
     );
   }
 
-  Future<void> _closeCurrentShift() async {
-    final cashierNameCtrl = TextEditingController();
+  final TextEditingController cashierNameCtrl = TextEditingController();
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder:
-          (_) => AlertDialog(
-            title: const Text('تأكيد تقفيل الشيفت'),
-            content: TextField(
-              controller: cashierNameCtrl,
-              decoration: const InputDecoration(labelText: 'اسم الكاشير'),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('إلغاء'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('تأكيد'),
-              ),
-            ],
-          ),
+  double closingBalance = 0.0; // أو احسبه من DbHelper
+
+  Future<void> _openShift({required String cashierName}) async {
+    final openingBalance = await DbHelper.instance.getClosingBalance();
+    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    await DbHelper.instance.openShift(
+      id: id,
+      cashierName: cashierName, // ✅ استخدم المتغير المرسل
+      openingBalance: openingBalance,
     );
+    _currentShiftId = id;
+    _currentShiftData = {
+      "cashierName": cashierName, // ✅ نفس الشي
+      "openedAt": DateTime.now(),
+    };
 
-    if (confirmed != true || _currentShiftId == null) return;
-
-    await _closeShift(cashierName: cashierNameCtrl.text);
-    await _loadCurrentShift();
+    setState(() {
+      _currentShift = _currentShiftData; // عشان الأيقونة تتغير فورًا
+    });
   }
 
-  /*  int _updateExpiringFlags() {
-    final now = DateTime.now();
-    int newCount = 0;
+  Map<String, dynamic>? _currentShiftData;
 
-    for (var s in _sessions) {
-      bool newExpired = s.end != null && now.isAfter(s.end!);
-      bool newExpiring =
-          s.end != null &&
-          now.isBefore(s.end!) &&
-          s.end!.difference(now).inMinutes <= 50;
-      bool newDaily =
-          s.subscription != null &&
-          s.subscription!.dailyUsageType == 'limited' &&
-          _minutesOverlapWithDateSub(s, now) >=
-              (s.subscription!.dailyUsageHours! * 60);
+  Future<void> _closeCurrentShift() async {
+    if (_currentShiftId != null && _currentShiftData != null) {
+      await DbHelper.instance.closeShift(
+        _currentShiftId!,
+        closingBalance,
+        _currentShiftData!["cashierName"] as String,
+      );
 
-      // ⛔️ انتهت الباقة
-      if (newExpired && !s.expiredNotified && !s.shownExpired) {
-        s.expiredNotified = true;
-        newCount++;
-
-        NotificationsDb.insertNotification(
-          NotificationItem(
-            sessionId: s.id,
-            type: "expired",
-            message: "الباقة ${s.name} انتهت",
-          ),
-        );
-      }
-
-      // ⏳ قربت تنتهي
-      if (newExpiring && !s.expiringNotified && !s.shownExpiring) {
-        s.expiringNotified = true;
-        newCount++;
-
-        NotificationsDb.insertNotification(
-          NotificationItem(
-            sessionId: s.id,
-            type: "expiring",
-            message: "الباقة ${s.name} هتنتهي بعد ساعة",
-          ),
-        );
-      }
-
-      // ⚠️ الحد اليومي
-      if (newDaily && !s.dailyLimitNotified && !s.shownDailyLimit) {
-        s.dailyLimitNotified = true;
-        newCount++;
-
-        NotificationsDb.insertNotification(
-          NotificationItem(
-            sessionId: s.id,
-            type: "dailyLimit",
-            message: "الباقة ${s.name} وصلت الحد اليومي",
-          ),
-        );
-      }
+      setState(() {
+        _currentShiftId = null;
+        _currentShiftData = null;
+      });
     }
-
-    if (newCount > 0) setState(() {});
-    return newCount;
-  }*/
-
-  int _updateExpiringFlags() {
-    final now = DateTime.now();
-    int newCount = 0;
-
-    for (var s in _sessions) {
-      bool newExpired = s.end != null && now.isAfter(s.end!);
-      bool newExpiring =
-          s.end != null &&
-          now.isBefore(s.end!) &&
-          s.end!.difference(now).inMinutes <= 50;
-      bool newDaily =
-          s.subscription != null &&
-          s.subscription!.dailyUsageType == 'limited' &&
-          _minutesOverlapWithDateSub(s, now) >=
-              (s.subscription!.dailyUsageHours! * 60);
-
-      // ⚠️ هنا الفرق: ما نحدّثش إلا لو الشرط اتحقق لأول مرة
-      if (newExpired && !s.expiredNotified && !s.shownExpired) {
-        s.expiredNotified = true;
-        newCount++;
-      }
-      if (newExpiring && !s.expiringNotified && !s.shownExpiring) {
-        s.expiringNotified = true;
-        newCount++;
-      }
-      if (newDaily && !s.dailyLimitNotified && !s.shownDailyLimit) {
-        s.dailyLimitNotified = true;
-        newCount++;
-      }
-    }
-
-    if (newCount > 0) setState(() {});
-    return newCount;
   }
-
-  // int get badgeCount {
-  //   final now = DateTime.now();
-  //   int count = 0;
-  //
-  //   for (var s in _sessions) {
-  //     if (s.subscription == null) continue;
-  //
-  //     // الاشتراك انتهى
-  //     if (s.end != null && now.isAfter(s.end!)) {
-  //       count++;
-  //       continue;
-  //     }
-  //
-  //     // قرب الانتهاء
-  //     if (s.end != null && now.isBefore(s.end!)) {
-  //       final remaining = s.end!.difference(now);
-  //       if (remaining.inMinutes <= 50) {
-  //         count++;
-  //       }
-  //     }
-  //
-  //     // الحد اليومي
-  //     final plan = s.subscription!;
-  //     if (plan.dailyUsageType == 'limited' && plan.dailyUsageHours != null) {
-  //       final spentToday = _minutesOverlapWithDateSub(s, now);
-  //       final allowedToday = plan.dailyUsageHours! * 60;
-  //       if (spentToday >= allowedToday) {
-  //         count++;
-  //       }
-  //     }
-  //   }
-  //
-  //   return count;
-  // }
 
   int get badgeCount {
     int count = 0;
@@ -2187,17 +1667,6 @@ $dailyLimitInfo
     return count;
   }
 
-  /*Future<int> get badgeCount async {
-    final db = await DbHelper.instance.database;
-    final res = await db.query('notifications', where: 'isRead = 0');
-    return res.length;
-  }
-
-  Future<int> getBadgeCount() async {
-    final db = await DbHelper.instance.database;
-    final res = await db.query('notifications', where: 'isRead = 0');
-    return res.length;
-  }*/
   Future<void> sellProduct(Product product, int qty) async {
     if (qty <= 0) return;
 
@@ -2217,19 +1686,24 @@ $dailyLimitInfo
     setState(() {}); // تحديث الـ UI
   }
 
-  // داخل _CashierScreenState
-  void _convertToPayg() async {
-    if (mounted) {
-      setState(() {
-        _loadSessions2(); // أو أي دالة تحدث التاب
-      });
-    }
+  Future<int> getBadgeCount() async {
+    final db = await DbHelper.instance.database;
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as cnt FROM notifications WHERE isRead = 0',
+    );
+
+    if (result.isEmpty) return 0;
+
+    final dynamic cntRaw = result.first['cnt'];
+    if (cntRaw == null) return 0;
+    if (cntRaw is int) return cntRaw;
+    if (cntRaw is String) return int.tryParse(cntRaw) ?? 0;
+
+    return int.tryParse(cntRaw.toString()) ?? 0;
   }
 
   @override
   Widget build(BuildContext context) {
-    final isShiftOpen = _currentShiftId != null;
-
     return DefaultTabController(
       length: 3,
       child: Scaffold(
@@ -2270,151 +1744,93 @@ $dailyLimitInfo
             ),
 
             IconButton(
-              icon: Icon(isShiftOpen ? Icons.lock_clock : Icons.lock_person),
-              tooltip: isShiftOpen ? 'تقفيل الشيفت' : 'فتح شيفت',
-              onPressed: isShiftOpen ? _closeCurrentShift : _openShift,
+              icon: Icon(
+                _currentShift != null ? Icons.lock_clock : Icons.lock_person,
+              ),
+              tooltip:
+                  _currentShift != null
+                      ? 'قفّل الشيفت الحالي'
+                      : 'افتح شيفت جديد',
+              onPressed: () async {
+                if (_currentShift != null) {
+                  // إذا فيه شيفت مفتوح، نقفله
+                  await _closeCurrentShift();
+                } else {
+                  // فتح شيفت جديد
+                  final cashierNameCtrl = TextEditingController();
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder:
+                        (_) => AlertDialog(
+                          title: const Text('فتح شيفت جديد'),
+                          content: TextField(
+                            controller: cashierNameCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'اسم الكاشير',
+                            ),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context, false),
+                              child: const Text('إلغاء'),
+                            ),
+                            ElevatedButton(
+                              onPressed: () => Navigator.pop(context, true),
+                              child: const Text('فتح شيفت'),
+                            ),
+                          ],
+                        ),
+                  );
+
+                  if (confirmed == true && cashierNameCtrl.text.isNotEmpty) {
+                    await _openShift(cashierName: cashierNameCtrl.text);
+                  }
+                }
+              },
             ),
 
             Stack(
               children: [
                 IconButton(
                   icon: const Icon(Icons.notifications),
-                  tooltip: 'الاشتراكات المنتهية والقريبة من الانتهاء',
-                  onPressed: () async {
-                    // تقدر تحدث الإشعارات هنا لو عايز
+                  tooltip: 'الإشعارات',
+                  onPressed: () {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder:
                             (_) => ExpiringSessionsPage(
-                              onViewed: () async {
-                                final db = await DbHelper.instance.database;
-                                await db.update('notifications', {
-                                  'isRead': 1,
-                                }, where: 'isRead = 0');
-                              },
                               sessionsSub: _sessions,
+                              onViewed: () async {
+                                // await NotificationsDb.markAllAsRead();
+                                _loadBadge(); // صفر بعد المشاهدة
+                              },
                             ),
                       ),
-                    ).then(
-                      (_) => setState(() {}),
-                    ); // عشان الـ badge يتحدث بعد الرجوع
+                    ).then((_) => _loadBadge());
                   },
                 ),
-                Stack(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.notifications),
-                      tooltip: 'الاشتراكات المنتهية والقريبة من الانتهاء',
-                      onPressed: () {
-                        _updateExpiringFlags(); // ← تحديث قبل فتح الصفحة
 
-                        for (var s in _sessions) {
-                          if (s.subscription == null) continue;
-                          final now = DateTime.now();
-
-                          s.expiredNotified =
-                              (s.end != null && now.isAfter(s.end!));
-                          s.expiringNotified =
-                              (s.end != null &&
-                                  now.isBefore(s.end!) &&
-                                  s.end!.difference(now).inMinutes <= 50);
-                          s.dailyLimitNotified =
-                              (s.subscription!.dailyUsageType == 'limited' &&
-                                  _minutesOverlapWithDateSub(s, now) >=
-                                      (s.subscription!.dailyUsageHours! * 60));
-                        }
-
-                        setState(() {}); // ← لتحديث badgeCount قبل الانتقال
-
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder:
-                                (_) => ExpiringSessionsPage(
-                                  sessionsSub: _sessions,
-                                  onViewed: () {
-                                    for (var s in _sessions) {
-                                      if (s.expiredNotified)
-                                        s.shownExpired = true;
-                                      if (s.expiringNotified)
-                                        s.shownExpiring = true;
-                                      if (s.dailyLimitNotified)
-                                        s.shownDailyLimit = true;
-                                    }
-                                    setState(() {});
-                                  },
-                                ),
-                          ),
-                        ).then((_) {
-                          // تصفير الإشعارات بعد الرجوع
-                          for (var s in _sessions) {
-                            if (s.expiredNotified) s.shownExpired = true;
-                            if (s.expiringNotified) s.shownExpiring = true;
-                            if (s.dailyLimitNotified) s.shownDailyLimit = true;
-
-                            // تصفير الإشعارات المعروضة
-                            s.expiredNotified = false;
-                            s.expiringNotified = false;
-                            s.dailyLimitNotified = false;
-                          }
-                          setState(() {}); // تحديث الـ badge
-                        });
-                      },
+                if (_badgeCount > 0)
+                  Positioned(
+                    right: 4,
+                    top: 4,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        '$_badgeCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
-
-                    // Badge
-                    if (badgeCount > 0)
-                      Positioned(
-                        right: 4,
-                        top: 4,
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: const BoxDecoration(
-                            color: Colors.red,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Text(
-                            '$badgeCount',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-
-                // Badge مربوط بالـ DB
-                /*   FutureBuilder<int>(
-                  future: getBadgeCount(),
-                  builder: (context, snapshot) {
-                    final count = snapshot.data ?? 0;
-                    if (count == 0) return const SizedBox.shrink();
-
-                    return Positioned(
-                      right: 4,
-                      top: 4,
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: const BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Text(
-                          '$count',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),*/
+                  ),
               ],
             ),
           ],
@@ -2526,9 +1942,18 @@ $dailyLimitInfo
                                 final controller = DefaultTabController.of(
                                   context,
                                 );
+
+                                if (controller.index == index) {
+                                  // 👈 لو دوسنا على نفس التاب الحالي → نعمل reload
+                                  if (index == 1) {
+                                    // التاب اللي في النص "مشتركين حر"
+                                    _loadSessions(); // أو أي دالة refresh عندك
+                                  }
+                                }
+
                                 controller.animateTo(
                                   index,
-                                  duration: Duration.zero, // ✅ من غير أنيميشن
+                                  duration: Duration.zero,
                                   curve: Curves.linear,
                                 );
                               },
@@ -2843,18 +2268,6 @@ $dailyLimitInfo
                 Row(
                   children: [
                     Expanded(
-                      /*ElevatedButton(
-                      onPressed:
-                      s.isActive ? () => _togglePauseSessionFor(s) : null,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blueGrey[700],
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: Text(s.isPaused ? 'استئناف' : 'ايقاف مؤقت'),
-                    ),*/
                       child: CustomButton(
                         color:
                             s.isPaused
@@ -2882,26 +2295,6 @@ $dailyLimitInfo
                                 }
                                 : null,
                       ),
-                      /*     ElevatedButton(
-                        onPressed:
-                            s.isActive && !s.isPaused
-                                ? () async {
-                                  setState(() => _selectedSession = s);
-                                  await showModalBottomSheet(
-                                    context: context,
-                                    builder: (_) => _buildAddProductsAndPay(s),
-                                  );
-                                }
-                                : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blue[700],
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        child: const Text('اضف & دفع'),
-                      ),*/
                     ),
                   ],
                 ),
@@ -2911,69 +2304,6 @@ $dailyLimitInfo
         );
       },
     );
-  }
-
-  void _handleDuplicateSessions(List<Session> sessions) async {
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final Map<String, List<Session>> grouped = {};
-      for (var s in sessions) {
-        grouped.putIfAbsent(s.name, () => []).add(s);
-      }
-
-      for (var entry in grouped.entries) {
-        if (entry.value.length > 1) {
-          final duplicates = entry.value;
-          duplicates.sort((a, b) => b.start.compareTo(a.start));
-
-          final latest = duplicates.first;
-          final older = duplicates.skip(1).toList();
-
-          final action = await showDialog<String>(
-            context: context,
-            builder: (ctx) {
-              return AlertDialog(
-                title: Text("تكرار الجلسات: ${latest.name}"),
-                content: const Text(
-                  "فيه أكثر من جلسة بنفس الاسم.\nعايز تعمل إيه؟",
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, "close_older"),
-                    child: const Text("اقفل القديمة"),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, "merge"),
-                    child: const Text("ادمجهم"),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, "ignore"),
-                    child: const Text("سيبهم زي ما هما"),
-                  ),
-                ],
-              );
-            },
-          );
-
-          if (action == "close_older") {
-            for (var s in older) {
-              s.isActive = false;
-              await SessionDb.updateSession(s);
-            }
-          } else if (action == "merge") {
-            for (var s in older) {
-              latest.elapsedMinutes += s.elapsedMinutes;
-              latest.cart.addAll(s.cart);
-              s.isActive = false;
-              await SessionDb.updateSession(s);
-            }
-            await SessionDb.updateSession(latest);
-          }
-        }
-      }
-
-      // بعد المعالجة، حدث الصفحة بدون استدعاء `_loadSessionsSub` مرة تانية
-      if (mounted) setState(() {});
-    });
   }
 
   /* Widget _buildSubscribersList({required bool withPlan}) {
@@ -3557,43 +2887,6 @@ $dailyLimitInfo
       },
     );
   }
-
-  /* Widget _buildDrinksSalesList() {
-    final sales = AdminDataService.instance.sales;
-
-    // جمع كل المنتجات من كل المبيعات
-    final List<Map<String, dynamic>> drinks = [];
-    for (final sale in sales) {
-      for (final item in sale.cart) {
-        drinks.add({
-          'name': item.product.name,
-          'qty': item.qty,
-          'total': item.total,
-          'time': sale.createdAt, // لو عندك وقت البيع
-        });
-      }
-    }
-
-    // ترتيب من الأحدث للأقدم حسب الوقت
-    drinks.sort((a, b) => (b['time'] as DateTime).compareTo(a['time'] as DateTime));
-
-    if (drinks.isEmpty) {
-      return const Center(child: Text("لا يوجد مشاريب مباعة"));
-    }
-
-    return ListView.builder(
-      itemCount: drinks.length,
-      itemBuilder: (context, i) {
-        final item = drinks[i];
-        return Card(
-          child: ListTile(
-            title: Text(item['name']),
-            subtitle: Text("الكمية: ${item['qty']} — المجموع: ${item['total']} ج"),
-          ),
-        );
-      },
-    );
-  }*/
 }
 
 extension FirstWhereOrNullExtension<E> on List<E> {

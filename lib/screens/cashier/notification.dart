@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import '../../core/NotificationsDb.dart';
 import '../../core/models.dart';
 
 class ExpiringSessionsPage extends StatefulWidget {
-  final List<Session> sessionsSub; // قائمة الجلسات الحالية
+  final List<Session> sessionsSub;
   final VoidCallback? onViewed;
   const ExpiringSessionsPage({
     super.key,
@@ -17,136 +18,62 @@ class ExpiringSessionsPage extends StatefulWidget {
 class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
   List<Session> expiring = [];
   List<Session> expired = [];
-  List<Session> dailyLimitReached = []; // ← هنا تعريفه كمتغير عضو
+  List<Session> dailyLimitReached = [];
 
   @override
   void initState() {
     super.initState();
-    _checkExpiring(); // أول حساب عند فتح الصفحة
-    // بمجرد فتح الصفحة، اعتبر كل الجلسات تمت مشاهدتها
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      // تحديث flags بعد انتهاء build الحالي
-
-      widget.onViewed?.call(); // الآن آمن أن تنادي setState في parent
-    });
+    _loadNotifications();
   }
 
-  void _checkExpiring() {
-    final now = DateTime.now();
-    final e = <Session>[];
-    final x = <Session>[];
-    final daily = <Session>[]; // مؤقت لحساب الحد اليومي
+  Future<void> _loadNotifications() async {
+    final allNotifs = await NotificationsDb.getAll();
 
-    for (var s in widget.sessionsSub) {
-      if (s.subscription == null) continue;
+    final e = <NotificationItem>[];
+    final x = <NotificationItem>[];
+    final daily = <NotificationItem>[];
 
-      // انتهت الباقة
-      if (s.end != null && now.isAfter(s.end!)) {
-        x.add(s);
-        continue;
-      }
-
-      // قرب الانتهاء
-      if (s.end != null && now.isBefore(s.end!)) {
-        final remaining = s.end!.difference(now);
-        if (remaining.inMinutes <= 58) {
-          e.add(s);
-          continue;
-        }
-      }
-
-      // الحد اليومي
-      if (s.subscription!.dailyUsageType == 'limited' &&
-          s.subscription!.dailyUsageHours != null) {
-        final spentToday = _minutesOverlapWithDateSub(s, now);
-        final allowedToday = s.subscription!.dailyUsageHours! * 60;
-        if (spentToday >= allowedToday) {
-          daily.add(s);
-        }
-      }
+    for (var n in allNotifs) {
+      if (n.type == 'expiring') e.add(n);
+      if (n.type == 'expired') x.add(n);
+      if (n.type == 'dailyLimit') daily.add(n);
     }
+
+    // تحويل الجلسات لقائمة فريدة حسب id لتجنب duplicates
+    final sessionMap = {
+      for (var s in widget.sessionsSub) s.id: s,
+    };
 
     setState(() {
-      expiring = e;
-      expired = x;
-      dailyLimitReached = daily; // ← تحديث المتغير العضو
+      expiring = e.map((n) => sessionMap[n.sessionId])
+          .where((s) => s != null)
+          .cast<Session>()
+          .toList();
+
+      expired = x.map((n) => sessionMap[n.sessionId])
+          .where((s) => s != null)
+          .cast<Session>()
+          .toList();
+
+      dailyLimitReached = daily.map((n) => sessionMap[n.sessionId])
+          .where((s) => s != null)
+          .cast<Session>()
+          .toList();
     });
-  }
-
-  DateTime? _getSubscriptionEndSub(Session s) {
-    final plan = s.subscription;
-    if (plan == null || plan.isUnlimited)
-      return s.end; // لو محفوظ end، أظهرها، وإلا null
-
-    // احسب النهاية الأساسية من بداية الاشتراك
-    final start = s.start;
-    DateTime end;
-    switch (plan.durationType) {
-      case "hour":
-        end = start.add(Duration(hours: plan.durationValue ?? 0));
-        break;
-      case "day":
-        end = start.add(Duration(days: plan.durationValue ?? 0));
-        break;
-      case "week":
-        end = start.add(Duration(days: 7 * (plan.durationValue ?? 0)));
-        break;
-      case "month":
-        end = DateTime(
-          start.year,
-          start.month + (plan.durationValue ?? 0),
-          start.day,
-          start.hour,
-          start.minute,
-        );
-        break;
-      default:
-        return s.end;
-    }
-
-    // ضف التجميد المتراكم
-    if (s.frozenMinutes > 0) {
-      end = end.add(Duration(minutes: s.frozenMinutes));
-    }
-
-    // اذا الجلسة موقوفة حاليا - اضف زمن التجميد الحالى (حتى يظهر الوقت متوقف أثناء العرض)
-    if (s.isPaused && s.pauseStart != null) {
-      final now = DateTime.now();
-      final currentFrozen = now.difference(s.pauseStart!).inMinutes;
-      if (currentFrozen > 0) end = end.add(Duration(minutes: currentFrozen));
-    }
-
-    // إذا كان بحقل s.end قيمة محفوظة (مثلاً اذا خزنتها عند الإنشاء) فاستخدمها بدل ذلك
-    if (s.end != null) {
-      // end في السجل يمكن أن يكون أدرجتَه سابقاً — لكن حافظ على إضافة frozen لنفس السلوك
-      var stored = s.end!;
-      // ضمان أن stored يساوي أو أكبر من الحساب (أو اختر سياسة أخرى)
-      if (stored.isBefore(end)) stored = end;
-      return stored;
-    }
-
-    return end;
   }
 
   int _minutesOverlapWithDateSub(Session s, DateTime date) {
-    // إذا الجلسة دلوقتي حر فنرجع 0 — لا نحسب وقت بعد التحويل كباقي باقة
     if (s.type == 'حر') return 0;
-
     final dayStart = DateTime(date.year, date.month, date.day);
     final dayEnd = dayStart.add(const Duration(days: 1));
     final now = DateTime.now();
 
-    // دالة مساعدة: كم دقّة استهلكت الجلسة من بداية الـ session حتى وقت محدد
     int consumedUntil(DateTime t) {
-      // نمنع حساب زمن من المستقبل
       final upto = t.isBefore(now) ? t : now;
-      // نعطي نسخة مؤقتة من الsession لنستخدم دوالنا بصورة صحيحة
-      // أسهل طريقه: نحتسب استهلاك حتى upto بنفس منطق getSessionMinutes لكن محددًا بـ upto
-      final effectiveEnd = _getSubscriptionEndSub(s) ?? upto;
+      final effectiveEnd = s.end ?? upto;
       final end = effectiveEnd.isBefore(upto) ? effectiveEnd : upto;
       final totalSinceStart = end.difference(s.start).inMinutes;
       int frozen = s.frozenMinutes;
-      // إذا كان هناك إيقاف جارٍ وبدأ قبل `upto`، نحسب جزء التجميد حتى upto
       if (s.isPaused && s.pauseStart != null && s.pauseStart!.isBefore(upto)) {
         final curFrozen = upto.difference(s.pauseStart!).inMinutes;
         if (curFrozen > 0) frozen += curFrozen;
@@ -155,11 +82,9 @@ class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
       return consumed < 0 ? 0 : consumed;
     }
 
-    // استهلاك حتى نهاية اليوم (أو الآن إذا قبل نهاية اليوم)
     final upto = dayEnd.isBefore(now) ? dayEnd : now;
     final consumedToEnd = consumedUntil(upto);
     final consumedToStart = consumedUntil(dayStart);
-
     final overlap = consumedToEnd - consumedToStart;
     return overlap < 0 ? 0 : overlap;
   }
@@ -175,6 +100,359 @@ class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
     return "$m دقيقة";
   }
 
+  Future<void> _markAllAsRead() async {
+    await NotificationsDb.markAllAsRead();
+    for (var s in widget.sessionsSub) {
+      s.shownExpiring = true;
+      s.shownExpired = true;
+      s.shownDailyLimit = true;
+    }
+    if (mounted) setState(() {});
+  }
+
+  /*Future<void> _deleteAll() async {
+    await NotificationsDb.clearAll();
+    setState(() {
+      expiring.clear();
+      expired.clear();
+      dailyLimitReached.clear();
+    });
+  }*/
+
+  Future<void> _markOneAsRead(Session s, String type) async {
+    await NotificationsDb.markAsReadBySessionAndType(s.id, type);
+    if (type == 'expired') s.shownExpired = true;
+    if (type == 'expiring') s.shownExpiring = true;
+    if (type == 'dailyLimit') s.shownDailyLimit = true;
+    widget.onViewed?.call();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _deleteOne(Session s, String type) async {
+    // Soft delete بدل حذف كامل
+    await NotificationsDb.softDeleteBySessionAndType(s.id, type);
+    setState(() {
+      if (type == 'expired') expired.removeWhere((x) => x.id == s.id);
+      if (type == 'expiring') expiring.removeWhere((x) => x.id == s.id);
+      if (type == 'dailyLimit')
+        dailyLimitReached.removeWhere((x) => x.id == s.id);
+    });
+  }
+
+  Future<void> _deleteAll() async {
+    final allSessions = [...expired, ...expiring, ...dailyLimitReached];
+    for (var s in allSessions) {
+      if (expired.contains(s))
+        await NotificationsDb.softDeleteBySessionAndType(s.id, 'expired');
+      if (expiring.contains(s))
+        await NotificationsDb.softDeleteBySessionAndType(s.id, 'expiring');
+      if (dailyLimitReached.contains(s))
+        await NotificationsDb.softDeleteBySessionAndType(s.id, 'dailyLimit');
+    }
+    setState(() {
+      expired.clear();
+      expiring.clear();
+      dailyLimitReached.clear();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("الإشعارات"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.done_all),
+            tooltip: "اعتبار الكل مقروء",
+            onPressed: _markAllAsRead,
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_forever),
+            tooltip: "مسح الكل",
+            onPressed: _deleteAll,
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _loadNotifications,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            if (dailyLimitReached.isNotEmpty) ...[
+              const Text(
+                "⚠️ الحد اليومي وصل",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              ...dailyLimitReached.map(
+                (s) => ListTile(
+                  leading: Icon(
+                    s.shownDailyLimit ? Icons.check_circle : Icons.fiber_new,
+                    color: s.shownDailyLimit ? Colors.grey : Colors.red,
+                  ),
+                  title: Text(s.name),
+                  subtitle: const Text("وصل حد استخدام اليومي للباقة"),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.visibility),
+                        tooltip: "اعتبار كمقروء",
+                        onPressed: () => _markOneAsRead(s, 'dailyLimit'),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        tooltip: "حذف",
+                        onPressed: () => _deleteOne(s, 'dailyLimit'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const Divider(),
+            ],
+
+            if (expiring.isNotEmpty) ...[
+              const Text(
+                "⏳ الاشتراكات القريبة من الانتهاء",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              ...expiring.map(
+                (s) => ListTile(
+                  leading: Icon(
+                    s.shownExpiring ? Icons.hourglass_bottom : Icons.fiber_new,
+                    color: s.shownExpiring ? Colors.grey : Colors.orange,
+                  ),
+                  title: Text(s.name),
+                  subtitle: Text(
+                    "ينتهي في: ${s.end!.toLocal()} - باقي: ${_formatRemainingTime(s)}",
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.visibility),
+                        tooltip: "اعتبار كمقروء",
+                        onPressed: () => _markOneAsRead(s, 'expiring'),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        tooltip: "حذف",
+                        onPressed: () => _deleteOne(s, 'expiring'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const Divider(),
+            ],
+
+            if (expired.isNotEmpty) ...[
+              const Text(
+                "⛔ الاشتراكات المنتهية",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              ...expired.map(
+                (s) => ListTile(
+                  leading: Icon(
+                    s.shownExpired ? Icons.cancel : Icons.fiber_new,
+                    color: s.shownExpired ? Colors.grey : Colors.purple,
+                  ),
+                  title: Text(s.name),
+                  subtitle: Text("انتهت في: ${s.end!.toLocal()}"),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.visibility),
+                        tooltip: "اعتبار كمقروء",
+                        onPressed: () => _markOneAsRead(s, 'expired'),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        tooltip: "حذف",
+                        onPressed: () => _deleteOne(s, 'expired'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+
+            if (expiring.isEmpty &&
+                expired.isEmpty &&
+                dailyLimitReached.isEmpty)
+              const Center(child: Text("لا توجد إشعارات")),
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _loadNotifications,
+        child: const Icon(Icons.refresh),
+      ),
+    );
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+import 'package:flutter/material.dart';
+import '../../core/NotificationsDb.dart';
+import '../../core/models.dart';
+
+class ExpiringSessionsPage extends StatefulWidget {
+  final List<Session> sessionsSub;
+  final VoidCallback? onViewed;
+  const ExpiringSessionsPage({
+    super.key,
+    required this.sessionsSub,
+    this.onViewed,
+  });
+
+  @override
+  State<ExpiringSessionsPage> createState() => _ExpiringSessionsPageState();
+}
+
+class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
+  List<Session> expiring = [];
+  List<Session> expired = [];
+  List<Session> dailyLimitReached = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _checkExpiring();
+  }
+
+  Future<void> _checkExpiring() async {
+    final now = DateTime.now();
+    final e = <Session>[];
+    final x = <Session>[];
+    final daily = <Session>[];
+
+    for (var s in widget.sessionsSub) {
+      if (s.subscription == null) continue;
+
+      // منتهية
+      if (s.end != null && now.isAfter(s.end!)) {
+        final exists = await NotificationsDb.exists(s.id, 'expired');
+        if (!exists) {
+          await NotificationsDb.insertNotification(
+            NotificationItem(
+              sessionId: s.id,
+              type: 'expired',
+              message: 'انتهى الاشتراك ${s.name}',
+            ),
+          );
+          s.expiredNotified = true;
+        }
+        x.add(s);
+      }
+      // هتنتهي خلال أقل من ساعة
+      else if (s.end != null && s.end!.difference(now).inMinutes <= 58) {
+        final exists = await NotificationsDb.exists(s.id, 'expiring');
+        if (!exists) {
+          await NotificationsDb.insertNotification(
+            NotificationItem(
+              sessionId: s.id,
+              type: 'expiring',
+              message: 'الاشتراك ${s.name} هينتهي قريب',
+            ),
+          );
+          s.expiringNotified = true;
+        }
+        e.add(s);
+      }
+
+      // تعدي الحد اليومي
+      if (s.subscription!.dailyUsageType == 'limited' &&
+          s.subscription!.dailyUsageHours != null) {
+        final spentToday = _minutesOverlapWithDateSub(s, now);
+        final allowedToday = s.subscription!.dailyUsageHours! * 60;
+        if (spentToday >= allowedToday) {
+          final exists = await NotificationsDb.exists(s.id, 'dailyLimit');
+          if (!exists) {
+            await NotificationsDb.insertNotification(
+              NotificationItem(
+                sessionId: s.id,
+                type: 'dailyLimit',
+                message: 'العميل ${s.name} استهلك الحد اليومي',
+              ),
+            );
+            s.dailyLimitNotified = true;
+          }
+          daily.add(s);
+        }
+      }
+    }
+
+    setState(() {
+      expiring = e;
+      expired = x;
+      dailyLimitReached = daily;
+    });
+  }
+
+  int _minutesOverlapWithDateSub(Session s, DateTime date) {
+    if (s.type == 'حر') return 0;
+    final dayStart = DateTime(date.year, date.month, date.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+    final now = DateTime.now();
+
+    int consumedUntil(DateTime t) {
+      final upto = t.isBefore(now) ? t : now;
+      final effectiveEnd = s.end ?? upto;
+      final end = effectiveEnd.isBefore(upto) ? effectiveEnd : upto;
+      final totalSinceStart = end.difference(s.start).inMinutes;
+      int frozen = s.frozenMinutes;
+      if (s.isPaused && s.pauseStart != null && s.pauseStart!.isBefore(upto)) {
+        final curFrozen = upto.difference(s.pauseStart!).inMinutes;
+        if (curFrozen > 0) frozen += curFrozen;
+      }
+      final consumed = totalSinceStart - frozen;
+      return consumed < 0 ? 0 : consumed;
+    }
+
+    final upto = dayEnd.isBefore(now) ? dayEnd : now;
+    final consumedToEnd = consumedUntil(upto);
+    final consumedToStart = consumedUntil(dayStart);
+    final overlap = consumedToEnd - consumedToStart;
+    return overlap < 0 ? 0 : overlap;
+  }
+
+  String _formatRemainingTime(Session s) {
+    final now = DateTime.now();
+    if (s.end == null) return "-";
+    final remaining = s.end!.difference(now);
+    if (remaining.inMinutes <= 0) return "انتهت";
+    final h = remaining.inHours;
+    final m = remaining.inMinutes % 60;
+    if (h > 0) return "$h ساعة و $m دقيقة";
+    return "$m دقيقة";
+  }
+
+  Future<void> _deleteAll() async {
+    await NotificationsDb.clearAll();
+    setState(() {
+      expiring.clear();
+      expired.clear();
+      dailyLimitReached.clear();
+    });
+  }
+
+  Future<void> _deleteOne(Session s, String type) async {
+    await NotificationsDb.softDeleteBySessionAndType(s.id, type);
+    setState(() {
+      if (type == 'expired') {
+        expired.remove(s);
+      } else if (type == 'expiring') {
+        expiring.remove(s);
+      } else if (type == 'dailyLimit') {
+        dailyLimitReached.remove(s);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -184,15 +462,20 @@ class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
           IconButton(
             icon: const Icon(Icons.done_all),
             tooltip: "اعتبار الكل مقروء",
-            onPressed: () {
-              setState(() {
-                for (var s in widget.sessionsSub) {
-                  s.shownExpiring = true;
-                  s.shownExpired = true;
-                  s.shownDailyLimit = true;
-                }
-              });
+            onPressed: () async {
+              for (var s in widget.sessionsSub) {
+                s.shownExpiring = true;
+                s.shownExpired = true;
+                s.shownDailyLimit = true;
+              }
+              await NotificationsDb.markAllAsRead();
+              setState(() {});
             },
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_forever),
+            tooltip: "مسح الكل",
+            onPressed: _deleteAll,
           ),
         ],
       ),
@@ -217,9 +500,21 @@ class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
                                 Icons.check_circle,
                                 color: Colors.grey,
                               ),
-
                       title: Text(s.name),
-                      subtitle: Text("وصل حد استخدام اليومي للباقة"),
+                      subtitle: const Text("وصل حد استخدام اليومي للباقة"),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        onPressed: () => _deleteOne(s, 'dailyLimit'),
+                      ),
+                      onTap: () async {
+                        await NotificationsDb.markAsReadBySessionAndType(
+                          s.id,
+                          'dailyLimit',
+                        );
+                        s.shownDailyLimit = true;
+                        widget.onViewed?.call();
+                        if (mounted) setState(() {});
+                      },
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -250,11 +545,48 @@ class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
                       subtitle: Text(
                         "ينتهي في: ${s.end!.toLocal()} - باقي: ${_formatRemainingTime(s)}",
                       ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: Icon(
+                              s.shownExpiring
+                                  ? Icons.check_circle
+                                  : Icons.mark_email_unread,
+                              color:
+                                  s.shownExpiring ? Colors.grey : Colors.orange,
+                            ),
+                            onPressed: () async {
+                              await NotificationsDb.markAsReadBySessionAndType(
+                                s.id,
+                                'expiring',
+                              );
+                              s.shownExpiring = true;
+                              widget.onViewed?.call();
+                              if (mounted) setState(() {});
+                            },
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () => _deleteOne(s, 'expiring'),
+                          ),
+                        ],
+                      ),
+                      onTap: () async {
+                        await NotificationsDb.markAsReadBySessionAndType(
+                          s.id,
+                          'expiring',
+                        );
+                        s.shownExpiring = true;
+                        widget.onViewed?.call();
+                        if (mounted) setState(() {});
+                      },
                     ),
                   ),
                   const SizedBox(height: 16),
                 ],
               ),
+
             if (expired.isNotEmpty)
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -274,25 +606,40 @@ class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
                               : const Icon(Icons.cancel, color: Colors.grey),
                       title: Text(s.name),
                       subtitle: Text("انتهت في: ${s.end!.toLocal()}"),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        onPressed: () => _deleteOne(s, 'expired'),
+                      ),
+                      onTap: () async {
+                        await NotificationsDb.markAsReadBySessionAndType(
+                          s.id,
+                          'expired',
+                        );
+                        s.shownExpired = true;
+                        widget.onViewed?.call();
+                        if (mounted) setState(() {});
+                      },
                     ),
                   ),
                 ],
               ),
-            if (expiring.isEmpty && expired.isEmpty)
-              const Center(
-                child: Text("لا توجد اشتراكات قريبة من الانتهاء أو منتهية"),
-              ),
+
+            if (expiring.isEmpty &&
+                expired.isEmpty &&
+                dailyLimitReached.isEmpty)
+              const Center(child: Text("لا توجد إشعارات")),
           ],
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _checkExpiring, // تحديث يدوي
+        onPressed: _checkExpiring,
         child: const Icon(Icons.refresh),
       ),
     );
   }
 }
-
+*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /*
 import 'package:flutter/material.dart';
 

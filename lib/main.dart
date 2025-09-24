@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:workspace/utils/colors.dart';
+import 'Timer.dart';
 import 'core/data_service.dart';
 import 'screens/home_router.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -8,6 +9,7 @@ import 'core/product_db.dart'; // للوصول إلى ProductDb
 import 'core/db_helper_Subscribe.dart'; // للوصول إلى SubscriptionDb
 
 void main() async {
+  TimeTicker.start();
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
   WidgetsFlutterBinding.ensureInitialized();
@@ -86,6 +88,20 @@ class WorkspaceCashierApp extends StatelessWidget {
             fontSize: 16,
             color: Colors.white70,
           ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor:Colors.transparent,
+          hintStyle: const TextStyle(color: Colors.white70),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Colors.white24, width: 1.5),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Colors.blueAccent, width: 2),
+          ),
+          contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
         ),
 
         // تخصيص أزرار TextButton زي اللي جوه SimpleDialogOption
