@@ -2,14 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:workspace/utils/colors.dart';
 import 'Timer.dart';
+import 'core/Db_helper.dart';
 import 'core/data_service.dart';
+import 'core/debug_close_shift.dart';
 import 'screens/home_router.dart';
+import 'screens/cashier/Closeshift_cashier.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'core/product_db.dart'; // للوصول إلى ProductDb
 import 'core/db_helper_Subscribe.dart'; // للوصول إلى SubscriptionDb
 
 void main() async {
   TimeTicker.start();
+/*  await DbHelper.instance.database; // تأكد DB جاهز
+  print('calling closeShiftDetailed...');
+  final shiftId = 'shift_test_1';
+  // تأكد أن الشيفت موجود أو استعمل debugPopulateAndClose الذي ينشئ شيفت أولاً
+  await debugPopulateAndClose();*/
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
   WidgetsFlutterBinding.ensureInitialized();
@@ -91,7 +99,7 @@ class WorkspaceCashierApp extends StatelessWidget {
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor:Colors.transparent,
+          fillColor: Colors.transparent,
           hintStyle: const TextStyle(color: Colors.white70),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
@@ -101,7 +109,10 @@ class WorkspaceCashierApp extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: Colors.blueAccent, width: 2),
           ),
-          contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+          contentPadding: const EdgeInsets.symmetric(
+            vertical: 12,
+            horizontal: 12,
+          ),
         ),
 
         // تخصيص أزرار TextButton زي اللي جوه SimpleDialogOption

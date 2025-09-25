@@ -39,7 +39,7 @@ class _CashierScreenState extends State<CashierScreen>
   final TextEditingController _searchCtrl = TextEditingController();
   final GlobalKey<AdminSubscribersPageeState> _subsKey = GlobalKey();
 
-  String? _currentShiftId;
+  int? _currentShiftId;
   // داخل class _CashierScreenState
   String get _currentCustomerName {
     // إذا فيه جلسة مختارة، استخدم اسمها، وإلا خذ الاسم من حقل الإدخال
@@ -342,22 +342,6 @@ class _CashierScreenState extends State<CashierScreen>
         );
       default:
         return null;
-    }
-  }
-
-  double _drawerBalance = 0.0;
-
-  Future<void> _loadDrawerBalance() async {
-    try {
-      final bal = await FinanceDb.getDrawerBalance();
-      if (mounted) setState(() => _drawerBalance = bal);
-    } catch (e, st) {
-      // طبع الخطأ علشان تعرف لو في مشكلة في DB
-      debugPrint('Failed to load drawer balance: $e\n$st');
-      if (mounted) {
-        // اختياري: تعرض snackbar للمستخدم لو حبيت
-        // ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ في جلب رصيد الدرج')));
-      }
     }
   }
 
@@ -978,9 +962,9 @@ class _CashierScreenState extends State<CashierScreen>
     return plan.dailyUsageHours! * 60; // تحويل ساعات إلى دقائق
   }
 
-  Widget _buildAddProductsAndPay(Session s) {
+  Widget _buildAddProductsAndPay(Session s, {bool onlyAdd = false}) {
     Product? selectedProduct;
-    TextEditingController qtyCtrl = TextEditingController(text: '1');
+    TextEditingController qtyCtrl = TextEditingController(text: '0');
 
     return StatefulBuilder(
       builder: (context, setSheetState) {
@@ -1036,8 +1020,9 @@ class _CashierScreenState extends State<CashierScreen>
                     onPressed: () async {
                       if (selectedProduct == null) return;
 
-                      final qty = int.tryParse(qtyCtrl.text) ?? 1;
+                      final qty = int.tryParse(qtyCtrl.text) ?? 0;
                       if (qty <= 0) return;
+                      // خصم المخزون مباشرة
 
                       // تحقق من المخزون
                       if (selectedProduct!.stock < qty) {
@@ -1050,7 +1035,18 @@ class _CashierScreenState extends State<CashierScreen>
                         );
                         return;
                       }
+                      selectedProduct!.stock -= qty;
+                      await ProductDb.insertProduct(
+                        selectedProduct!,
+                      ); // تحديث المخزون في DB
 
+                      // تحديث AdminDataService
+                      final index = AdminDataService.instance.products
+                          .indexWhere((p) => p.id == selectedProduct!.id);
+                      if (index != -1) {
+                        AdminDataService.instance.products[index].stock =
+                            selectedProduct!.stock;
+                      }
                       // خصم المخزون مؤقتًا
                       /*    selectedProduct!.stock -= qty;
                       final index = AdminDataService.instance.products
@@ -1163,18 +1159,30 @@ class _CashierScreenState extends State<CashierScreen>
               }).toList(),
               const SizedBox(height: 12),
               CustomButton(
-                text: "إتمام ودفع",
+                text: "تم اضافه الي السله",
                 onPressed: () async {
                   Navigator.pop(context);
-
-                  for (var item in s.cart) {
-                    await sellProduct(item.product, item.qty);
-                  }
-                  _completeAndPayForSession(s);
                 },
                 infinity: false,
                 color: Colors.green,
               ),
+              ...(!onlyAdd
+                  ? [
+                    CustomButton(
+                      text: "إتمام ودفع",
+                      onPressed: () async {
+                        Navigator.pop(context);
+
+                        for (var item in s.cart) {
+                          await sellProduct(item.product, item.qty);
+                        }
+                        _completeAndPayForSession(s);
+                      },
+                      infinity: false,
+                      color: Colors.green,
+                    ),
+                  ]
+                  : []),
             ],
           ),
         );
@@ -1553,24 +1561,45 @@ class _CashierScreenState extends State<CashierScreen>
   }
 
   ///-------------------------------Shift close===============
-  Map<String, dynamic>? _currentShift; // ✅ هنا عرفنا المتغير
+  Map<String, dynamic>? _currentShift;
+
+  double _drawerBalance = 0.0;
+
+  Future<void> _loadDrawerBalance() async {
+    try {
+      final bal = await FinanceDb.getDrawerBalance();
+      if (mounted) setState(() => _drawerBalance = bal);
+    } catch (e, st) {
+      // طبع الخطأ علشان تعرف لو في مشكلة في DB
+      debugPrint('Failed to load drawer balance: $e\n$st');
+      if (mounted) {
+        // اختياري: تعرض snackbar للمستخدم لو حبيت
+        // ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ في جلب رصيد الدرج')));
+      }
+    }
+  }
 
   Future<Map<String, dynamic>?> _loadCurrentShift() async {
     final db = await DbHelper.instance.database;
-    final rows = await db.query('shifts', where: 'closedAt IS NULL', limit: 1);
+    final rows = await db.query('shifts', where: 'closed_at IS NULL', limit: 1);
+
     if (rows.isEmpty) return null;
 
     final shift = rows.first;
-    final summary = await DbHelper.instance.getShiftSummary(
-      shift['id'] as String,
-    );
+
+    // null-safe id
+    final shiftId = shift['id'] is int
+        ? shift['id'] as int
+        : int.tryParse(shift['id'].toString()) ?? 0;
+
+    final summary = await DbHelper.instance.getShiftSummary(shiftId);
 
     final shiftData = {
-      "id": shift['id'],
-      "cashierName": shift['cashierName'],
-      "openedAt": shift['openedAt'],
-      "openingBalance": shift['openingBalance'],
-      "closingBalance": shift['closingBalance'],
+      "id": shiftId,
+      "cashierName": shift['cashier_name'] ?? '',
+      "openedAt": shift['opened_at'] ?? '',
+      "openingBalance": (shift['drawer_balance'] as num?)?.toDouble() ?? 0.0,
+      "closingBalance": (shift['total_sales'] as num?)?.toDouble() ?? 0.0,
       "sales": summary['sales'],
       "expenses": summary['expenses'],
       "profit": summary['profit'],
@@ -1583,12 +1612,24 @@ class _CashierScreenState extends State<CashierScreen>
     return shiftData;
   }
 
-  Future<String?> getCurrentShiftId() async {
+  Future<int?> getCurrentShiftId() async {
     final db = await DbHelper.instance.database;
-    final rows = await db.query('shifts', where: 'closedAt IS NULL', limit: 1);
-    if (rows.isEmpty) return null;
-    return rows.first['id'] as String;
+    final res = await db.query(
+      'shifts',
+      orderBy: 'id DESC',
+      limit: 1,
+    );
+
+    if (res.isNotEmpty) {
+      final row = res.first;
+      final idValue = row['id'];
+      if (idValue == null) return null;
+      return idValue is int ? idValue : int.tryParse(idValue.toString());
+    }
+
+    return null;
   }
+
 
   Future<double> getClosingBalance() async {
     final db = await DbHelper.instance.database;
@@ -1602,19 +1643,33 @@ class _CashierScreenState extends State<CashierScreen>
   }
 
   Future<void> _closeShift({required String cashierName}) async {
-    final shiftId = await getCurrentShiftId();
+    final int? shiftId = await getCurrentShiftId();
     if (shiftId == null) {
-      debugPrint("لا يوجد شيفت مفتوح للتقفيل");
+      debugPrint("⚠️ لا يوجد شيفت مفتوح للتقفيل");
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("لا يوجد شيفت مفتوح")),
+      );
       return;
     }
 
     final closingBalance = await getClosingBalance();
 
-    await DbHelper.instance.closeShift(shiftId, closingBalance, cashierName);
-
-    debugPrint(
-      "تم تقفيل الشيفت بنجاح باسم $cashierName مع رصيد $closingBalance",
+    await DbHelper.instance.closeShift(
+      shiftId, // ✅ int
+      closingBalance,
+      cashierName,
     );
+
+    debugPrint("✅ تم تقفيل الشيفت بنجاح باسم $cashierName مع رصيد $closingBalance");
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("تم تقفيل الشيفت بواسطة $cashierName")),
+    );
+
+    setState(() {
+      _currentShift = null;
+      _currentShiftId = null; // ✅ reset
+    });
   }
 
   final TextEditingController cashierNameCtrl = TextEditingController();
@@ -1623,21 +1678,23 @@ class _CashierScreenState extends State<CashierScreen>
 
   Future<void> _openShift({required String cashierName}) async {
     final openingBalance = await DbHelper.instance.getClosingBalance();
-    final id = DateTime.now().millisecondsSinceEpoch.toString();
-    await DbHelper.instance.openShift(
-      id: id,
-      cashierName: cashierName, // ✅ استخدم المتغير المرسل
-      openingBalance: openingBalance,
+    final int id = await DbHelper.instance.openShift(
+      'DefaultCashier',            // اسم الكاشير
+      openingBalance: openingBalance, // الرصيد الافتتاحي
     );
-    _currentShiftId = id;
-    _currentShiftData = {
-      "cashierName": cashierName, // ✅ نفس الشي
-      "openedAt": DateTime.now(),
-    };
+
 
     setState(() {
-      _currentShift = _currentShiftData; // عشان الأيقونة تتغير فورًا
+      _currentShiftId = id; // ✅ بقى int
+      _currentShift = {
+        "id": id,
+        "cashierName": cashierName,
+        "openedAt": DateTime.now(),
+        "drawer_balance": openingBalance,
+      };
     });
+
+    debugPrint("✅ تم فتح شيفت جديد: $id");
   }
 
   Map<String, dynamic>? _currentShiftData;
@@ -1742,52 +1799,111 @@ class _CashierScreenState extends State<CashierScreen>
                 ),
               ],
             ),
-
+/*
             IconButton(
               icon: Icon(
                 _currentShift != null ? Icons.lock_clock : Icons.lock_person,
               ),
               tooltip:
-                  _currentShift != null
-                      ? 'قفّل الشيفت الحالي'
-                      : 'افتح شيفت جديد',
+              _currentShift != null
+                  ? 'قفّل الشيفت الحالي'
+                  : 'افتح شيفت جديد',
               onPressed: () async {
                 if (_currentShift != null) {
-                  // إذا فيه شيفت مفتوح، نقفله
-                  await _closeCurrentShift();
+                  // إذا فيه شيفت مفتوح، نقفله ونطبع التقرير
+                  final int shiftId = _currentShift!['id'] as int;
+
+                  // جلب الرصيد النهائي (مثلا من drawer أو حسب حسابك)
+                  final double closingBalance = await DbHelper.instance.getClosingBalance();
+
+                  // استخدام closeShiftDetailed للحصول على التقرير الكامل
+                  final report = await DbHelper.instance.closeShiftDetailed(
+                    shiftId.toString(),
+                    countedClosingBalance: closingBalance,
+                    cashierName: _currentShift!['cashierName'] as String,
+                  );
+
+                  // طباعة التقرير في الـ debug console
+                  debugPrint("📄 تقرير الشيفت:\n$report");
+
+                  // تحديث الحالة في الواجهة
+                  setState(() {
+                    _currentShift = null;
+                    _currentShiftId = null;
+                  });
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("تم تقفيل الشيفت بواسطة ${report['cashierName']}")),
+                  );
                 } else {
                   // فتح شيفت جديد
                   final cashierNameCtrl = TextEditingController();
                   final confirmed = await showDialog<bool>(
                     context: context,
-                    builder:
-                        (_) => AlertDialog(
-                          title: const Text('فتح شيفت جديد'),
-                          content: TextField(
-                            controller: cashierNameCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'اسم الكاشير',
-                            ),
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context, false),
-                              child: const Text('إلغاء'),
-                            ),
-                            ElevatedButton(
-                              onPressed: () => Navigator.pop(context, true),
-                              child: const Text('فتح شيفت'),
-                            ),
-                          ],
+                    builder: (_) => AlertDialog(
+                      title: const Text('فتح شيفت جديد'),
+                      content: TextField(
+                        controller: cashierNameCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'اسم الكاشير',
                         ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('إلغاء'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text('فتح شيفت'),
+                        ),
+                      ],
+                    ),
                   );
 
                   if (confirmed == true && cashierNameCtrl.text.isNotEmpty) {
-                    await _openShift(cashierName: cashierNameCtrl.text);
+                  //  await _openShift(cashierName: cashierameCtrl.text);
                   }
                 }
               },
-            ),
+            )*/
+            IconButton(
+              icon: Icon(Icons.lock_clock),
+              tooltip: 'قفّل الشيفت الحالي',
+              onPressed: () async {
+                if (_currentShift != null) {
+                  // جلب رقم الشيفت المفتوح
+                  final int shiftId = _currentShift!['id'] as int;
+
+                  // جلب الرصيد النهائي
+                  final double closingBalance = await DbHelper.instance.getClosingBalance();
+
+                  // إغلاق الشيفت
+                  final report = await DbHelper.instance.closeShiftDetailed(
+                    shiftId.toString(),
+                    countedClosingBalance: closingBalance,
+                    cashierName: _currentShift!['cashierName'] as String,
+                  );
+
+                  debugPrint("📄 تقرير الشيفت:\n$report");
+
+                  setState(() {
+                    _currentShift = null;
+                    _currentShiftId = null;
+                  });
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("تم تقفيل الشيفت بواسطة ${report['cashierName']}")),
+                  );
+                } else {
+                  // إذا مفيش شيفت مفتوح، لا نفعل شيء
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("لا يوجد شيفت مفتوح ليتم تقفيله")),
+                  );
+                }
+              },
+            )
+,
 
             Stack(
               children: [
@@ -2225,6 +2341,7 @@ class _CashierScreenState extends State<CashierScreen>
                     ? "من: ${s.start.toLocal()} ⇢ ينتهي: ${endTime.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة"
                     : "من: ${s.start.toLocal()} ⇢ غير محدود ⇢ مضى: ${spentMinutes} دقيقة")
                 : "من: ${s.start.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة";
+
         final hours = spentMinutes ~/ 60; // القسمة الصحيحة
         final minutes = spentMinutes % 60; // الباقي
 
@@ -2269,6 +2386,24 @@ class _CashierScreenState extends State<CashierScreen>
                   children: [
                     Expanded(
                       child: CustomButton(
+                        text: 'اضف منتجات',
+                        onPressed: () async {
+                          setState(() => _selectedSession = s);
+                          await showModalBottomSheet(
+                            context: context,
+                            isScrollControlled: true,
+                            builder:
+                                (_) => _buildAddProductsAndPay(
+                                  s,
+                                  onlyAdd: true,
+                                ), // parameter جديد
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: CustomButton(
                         color:
                             s.isPaused
                                 ? Colors.transparent
@@ -2279,21 +2414,23 @@ class _CashierScreenState extends State<CashierScreen>
                             s.isActive ? () => _togglePauseSessionFor(s) : null,
                       ),
                     ),
+
                     const SizedBox(width: 12),
                     Expanded(
                       child: CustomButton(
-                        text: 'اضف & دفع',
-
-                        onPressed:
-                            s.isActive && !s.isPaused
-                                ? () async {
-                                  setState(() => _selectedSession = s);
-                                  await showModalBottomSheet(
-                                    context: context,
-                                    builder: (_) => _buildAddProductsAndPay(s),
-                                  );
-                                }
-                                : null,
+                        border: true,
+                        borderColor: Colors.red,
+                        text: 'دفع',
+                        onPressed: () async {
+                          for (var item in s.cart) {
+                            await sellProduct(
+                              item.product,
+                              item.qty,
+                            ); // خصم المخزون فعليًا
+                          }
+                          _completeAndPayForSession(s);
+                        },
+                        color: Colors.red,
                       ),
                     ),
                   ],

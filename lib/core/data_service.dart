@@ -112,6 +112,9 @@ class PricingSettings {
   });
 }
 */
+import 'dart:convert';
+
+import 'Db_helper.dart';
 import 'db_helper_discounts.dart';
 import 'db_helper_main_time.dart';
 import 'FinanceDb.dart';
@@ -124,6 +127,7 @@ class AdminDataService {
   // 👤 الباسوردات
   String adminPassword = "1234";
   String cashierPassword = "0000";
+  int? currentShiftId;
 
   // 📦 البيانات الحية في الذاكرة
   final List<SubscriptionPlan> subscriptions = [];
@@ -231,6 +235,109 @@ class AdminDataService {
     } catch (e) {
       drawerBalance = 0.0;
     }
+  }
+
+  //-----------------shift========================
+  // ------ تواصل بين DbHelper وذاكرة التطبيق عند تقفيل الشيفت ------
+  /// يغلق الشيفت باستخدام DbHelper.closeShiftDetailed ثم يحدث الذاكرة المحلية
+  Future<Map<String, dynamic>> closeShiftAndRefresh({
+    required String shiftId,
+    double? countedClosingBalance,
+    String? cashierName,
+  }) async {
+    // نفّذ إغلاق الشيفت وحفظ التقرير في DB
+    final report = await DbHelper.instance.closeShiftDetailed(
+      shiftId,
+      countedClosingBalance: countedClosingBalance,
+      cashierName: cashierName,
+    );
+
+    // حدِّث الذاكرة: المبيعات/المصاريف/رصيد الدرج
+    try {
+      sales = await FinanceDb.getSales();
+      expenses = await FinanceDb.getExpenses();
+      drawerBalance = await FinanceDb.getDrawerBalance();
+    } catch (e) {
+      // لو حصل خطأ في استرجاع القيم من FinanceDb، نعتمد على refreshDrawerBalance كنسخة احتياطية
+      await refreshDrawerBalance();
+    }
+
+    return report;
+  }
+
+  // ------ دوال للوصول للتقارير المحفوظة (shift_reports) ------
+  /// جلب كل تقارير الشيفت (اختياريًا فلترة على shiftId)
+  Future<List<Map<String, dynamic>>> getShiftReports({String? shiftId}) async {
+    final db = await DbHelper.instance.database;
+
+    List<Map<String, dynamic>> rows;
+    if (shiftId != null) {
+      rows = await db.query(
+        'shift_reports',
+        where: 'shiftId = ?',
+        whereArgs: [shiftId],
+        orderBy: 'createdAt DESC',
+      );
+    } else {
+      rows = await db.query('shift_reports', orderBy: 'createdAt DESC');
+    }
+
+    // فك الـ JSON وارجاع هيكل مرتب
+    return rows.map((r) {
+      final createdAt =
+          r['createdAt'] is int
+              ? DateTime.fromMillisecondsSinceEpoch(r['createdAt'] as int)
+              : (r['createdAt'] != null
+                  ? DateTime.tryParse(r['createdAt'].toString())
+                  : null);
+      Map<String, dynamic> reportJson = {};
+      try {
+        reportJson =
+            jsonDecode(r['reportJson']?.toString() ?? '{}')
+                as Map<String, dynamic>;
+      } catch (_) {
+        reportJson = {};
+      }
+      return {
+        'id': r['id'],
+        'shiftId': r['shiftId'],
+        'report': reportJson,
+        'createdAt': createdAt,
+      };
+    }).toList();
+  }
+
+  /// جلب تقرير واحد بحسب id
+  Future<Map<String, dynamic>?> getShiftReportById(String id) async {
+    final db = await DbHelper.instance.database;
+    final rows = await db.query(
+      'shift_reports',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final r = rows.first;
+    Map<String, dynamic> reportJson = {};
+    try {
+      reportJson =
+          jsonDecode(r['reportJson']?.toString() ?? '{}')
+              as Map<String, dynamic>;
+    } catch (_) {
+      reportJson = {};
+    }
+    final createdAt =
+        r['createdAt'] is int
+            ? DateTime.fromMillisecondsSinceEpoch(r['createdAt'] as int)
+            : (r['createdAt'] != null
+                ? DateTime.tryParse(r['createdAt'].toString())
+                : null);
+    return {
+      'id': r['id'],
+      'shiftId': r['shiftId'],
+      'report': reportJson,
+      'createdAt': createdAt,
+    };
   }
 
   // ------------------- تحديث الباسوردات -------------------

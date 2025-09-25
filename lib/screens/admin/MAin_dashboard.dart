@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/FinanceDb.dart';
 import '../../core/data_service.dart';
+import '../../core/Db_helper.dart';
 
 class DashboardPagee extends StatefulWidget {
   const DashboardPagee({Key? key}) : super(key: key);
@@ -17,6 +18,32 @@ class _DashboardPageState extends State<DashboardPagee> {
   void initState() {
     super.initState();
     admin.init(); // تحميل البيانات أول مرة
+  }
+  Future<void> printAllShifts() async {
+    final shifts = await DbHelper.instance.getAllShifts();
+    for (var row in shifts) {
+      debugPrint(
+        "🟢 شيفت رقم ${row['id']} | فتح: ${row['opened_at']} | إغلاق: ${row['closed_at']} | كاشير: ${row['cashier_name']} | الرصيد: ${row['drawer_balance']} | المبيعات: ${row['total_sales']}",
+      );
+    }
+
+    if (shifts.isEmpty) {
+      debugPrint("⚠️ مفيش أي شيفتات محفوظة");
+      return;
+    }
+
+    debugPrint("📋 قائمة الشيفتات:");
+    for (var row in shifts) {
+      final id = row['id'];
+      final closedAt = row['closed_at'];
+      final signers = row['signers'];
+      final balance = row['drawer_balance'];
+      final totalSales = row['total_sales'];
+
+      debugPrint(
+        "🟢 شيفت رقم $id | إغلاق: $closedAt | كاشير: $signers | الرصيد: $balance | المبيعات: $totalSales",
+      );
+    }
   }
 
   @override
@@ -36,7 +63,13 @@ class _DashboardPageState extends State<DashboardPagee> {
           children: [
             // اختيار التاريخ
             Row(
-              children: [
+              children: [ElevatedButton(
+                onPressed: () async {
+                  await printAllShifts();
+                },
+                child: const Text("عرض كل الشيفتات"),
+              ),
+
                 const Text("اختر تاريخ: "),
                 const SizedBox(width: 8),
                 ElevatedButton.icon(
@@ -116,11 +149,9 @@ class _DashboardPageState extends State<DashboardPagee> {
             ),
             const SizedBox(height: 10),
 
+            // قائمة الشيفتات
             FutureBuilder<List<Map<String, dynamic>>>(
-              future:
-                  _selectedDate != null
-                      ? FinanceDb.getShiftsByDate(_selectedDate!)
-                      : FinanceDb.getShifts(),
+              future: DbHelper.instance.getAllShifts(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -131,11 +162,50 @@ class _DashboardPageState extends State<DashboardPagee> {
 
                 final shifts = snapshot.data!;
                 return Column(
-                  children:
-                      shifts.map((shift) => _buildShiftCard(shift)).toList(),
+                  children: shifts.map((s) {
+
+                    final openedAt = s['opened_at']?.toString() ?? "-";
+                    final closedAt = s['closed_at']?.toString() ?? "-";
+                    final shiftId = s['id']?.toString() ?? "-"; // بدل shiftId
+                    final cashierName = s['cashier_name']?.toString() ?? "-"; // بدل signers أو null
+                    final openingBalance = (s['openingBalance'] as num?)?.toDouble() ?? 0.0;
+                 //   final finalClosingBalance = (s['finalClosingBalance'] as num?)?.toDouble() ?? 0.0;
+                    final totalSales = (s['totalSales'] as num?)?.toDouble() ?? 0.0;
+                 //   final finalClosingBalance = (s['finalClosingBalance'] as num?)?.toDouble() ?? 0.0;
+                    final finalClosingBalance =totalSales+openingBalance;
+                    // final finalClosingBalance = (s['drawer_balance'] as num?)?.toDouble() ?? 0.0;
+
+                   //final openingBalance = (s['openingBalance'] as num?)?.toDouble()
+                     //   ?? ((s['finalClosingBalance'] as num?)?.toDouble() ?? 0.0) - ((s['totalSales'] as num?)?.toDouble() ?? 0.0);
+
+                    return Card(
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      child: ListTile(
+                        title: Text("شيفت رقم $shiftId"),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text("فتح: $openedAt"),
+                            Text("قفل: $closedAt"),
+                            Text("رصيد البداية: ${openingBalance.toStringAsFixed(2)}"),
+                            Text("رصيد النهاية: ${finalClosingBalance.toStringAsFixed(2)}"),
+                            Text("مبيعات: ${totalSales.toStringAsFixed(2)}"),
+                          ],
+                        ),
+                        trailing: Text(
+                          "صافي ${totalSales.toStringAsFixed(2)}",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green,
+                          ),
+                        ),
+                      ),
+                    )
+                    ;
+                  }).toList(),
                 );
               },
-            ),
+            )
           ],
         ),
       ),
@@ -144,8 +214,12 @@ class _DashboardPageState extends State<DashboardPagee> {
 
   Widget _buildShiftCard(Map<String, dynamic> shift) {
     final totalExpenses = (shift["totalExpenses"] as num?)?.toDouble() ?? 0.0;
-    final openingBalance = (shift["openingBalance"] as num?)?.toDouble() ?? 0.0;
-    final closingBalance = (shift["closingBalance"] as num?)?.toDouble() ?? 0.0;
+    final cashierName = shift["cashier_name"]?.toString() ?? "-";
+    final openedAt = shift["opened_at"]?.toString() ?? "-";
+    final closedAt = shift["closed_at"]?.toString() ?? "-";
+    final openingBalance = (shift["drawer_balance"] as num?)?.toDouble() ?? 0.0;
+    final closingBalance = (shift["total_sales"] as num?)?.toDouble() ?? 0.0;
+
     final totalSales = closingBalance - openingBalance + totalExpenses;
 
     return Card(

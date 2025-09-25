@@ -566,8 +566,9 @@ class CartItem {
 
   CartItem({required this.id, required this.product, required this.qty});
 
-  double get total => product.price * qty;
+  double get total => product.price * qty; // السعر محسوب تلقائياً
 }
+
 
 ///========================Customer====================
 class Customer {

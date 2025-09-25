@@ -159,8 +159,8 @@ class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("الإشعارات"),
+      appBar: AppBar(forceMaterialTransparency: true,
+        title: const Center(child:Text("الإشعارات")),
         actions: [
           IconButton(
             icon: const Icon(Icons.done_all),

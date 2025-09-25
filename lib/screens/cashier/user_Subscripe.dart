@@ -512,7 +512,7 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
     return overlap < 0 ? 0 : overlap;
   }
 
-/*  int _getMinutesConsumedTodaySub(Session s, DateTime now) {
+  /*  int _getMinutesConsumedTodaySub(Session s, DateTime now) {
     if (s.type == 'حر') return 0;
 
     final dayStart = DateTime(now.year, now.month, now.day);
@@ -2436,7 +2436,20 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                       if (selectedProduct == null) return;
 
                       final qty = int.tryParse(qtyCtrl.text) ?? 1;
-                      if (qty <= 0) return;
+                      if (qty <= 0 || selectedProduct!.stock < qty) return;
+                      // خصم المخزون مباشرة
+                      selectedProduct!.stock -= qty;
+                      await ProductDb.insertProduct(
+                        selectedProduct!,
+                      ); // تحديث المخزون في DB
+
+                      // تحديث AdminDataService
+                      final index = AdminDataService.instance.products
+                          .indexWhere((p) => p.id == selectedProduct!.id);
+                      if (index != -1) {
+                        AdminDataService.instance.products[index].stock =
+                            selectedProduct!.stock;
+                      }
 
                       // تحقق من المخزون
                       if (selectedProduct!.stock < qty) {

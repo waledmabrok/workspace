@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:math';
 
 import '../core/data_service.dart';
-import '../core/db_helper_shifts.dart';
+import '../core/Db_helper.dart';
 import 'admin/admin_dashboard.dart' show AdminDashboard;
 import 'cashier/cashier_screen.dart';
 
@@ -14,20 +14,73 @@ class HomeRouter extends StatefulWidget {
 }
 
 class _HomeRouterState extends State<HomeRouter> {
+  int? currentShiftId;
+
   @override
   void initState() {
     super.initState();
-    // _loadPasswords();
-  }
 
-  String? cashierPassword;
-
-  Future<void> loadPasswords() async {
-    final cashiers = await CashierDb.getAll();
-    if (cashiers.isNotEmpty) {
-      cashierPassword = cashiers.first["password"];
+  }Future<void> _openShiftOnStart() async {
+    // جلب الشيفت المفتوح حالياً
+    final currentShift = await DbHelper.instance.getCurrentShift();
+    if (currentShift != null) {
+      debugPrint("⚠️ يوجد شيفت مفتوح بالفعل برقم ${currentShift['id']}");
+      return; // لا نفعل شيء، يوجد شيفت مفتوح
     }
+
+    // جلب آخر شيفت مغلق لحساب الرصيد الافتتاحي
+    final lastClosedShift = await DbHelper.instance.getLastClosedShift();
+    double openingBalance = 0.0;
+
+    if (lastClosedShift != null) {
+      openingBalance = (lastClosedShift['closingBalance'] as num?)?.toDouble() ?? 0.0;
+    }
+
+    // فتح شيفت جديد
+    final id = await DbHelper.instance.openShift(
+      'DefaultCashier',
+      openingBalance: openingBalance,
+    );
+
+    setState(() {
+      currentShiftId = id;
+    });
+
+    AdminDataService.instance.currentShiftId = id;
+    AdminDataService.instance.drawerBalance = openingBalance;
+
+    debugPrint("💰 رصيد البداية للشيفت الجديد: $openingBalance");
+    debugPrint("✅ تم فتح شيفت جديد تلقائي برقم $id");
   }
+
+
+/*
+  Future<void> _openShiftOnStart() async {
+    final lastClosedShift = await DbHelper.instance.getLastClosedShift();
+    double openingBalance = 0.0;
+
+    if (lastClosedShift != null) {
+      openingBalance = (lastClosedShift['closingBalance'] as num?)?.toDouble() ?? 0.0;
+    }
+
+    final id = await DbHelper.instance.openShift(
+      'DefaultCashier',
+      openingBalance: openingBalance,
+    );
+
+    setState(() {
+      currentShiftId = id;
+    });
+
+    AdminDataService.instance.currentShiftId = id;
+    AdminDataService.instance.drawerBalance = openingBalance;
+
+    debugPrint("💰 رصيد البداية للشيفت الجديد: $openingBalance");
+    debugPrint("✅ تم فتح شيفت جديد تلقائي برقم $id");
+  }
+*/
+
+
 
   /*  Future<void> _loadPasswords() async {
     await AdminDataService.instance.loadPasswords();
@@ -64,8 +117,9 @@ class _HomeRouterState extends State<HomeRouter> {
                       'واجهة الكاشير',
                       Icons.point_of_sale,
                       const CashierScreen(),
-                      correctPassword:
-                          AdminDataService.instance.cashierPassword,
+
+                      correctPassword: AdminDataService.instance.cashierPassword,
+
                     ),
                   ],
                 ),
@@ -92,7 +146,7 @@ class _HomeRouterState extends State<HomeRouter> {
       ),
       onPressed: () async {
         final ok = await _askForPassword(context, correctPassword);
-        if (ok) {
+        if (ok) { _openShiftOnStart();
           Navigator.of(context).push(MaterialPageRoute(builder: (_) => route));
         } else {
           ScaffoldMessenger.of(context).showSnackBar(

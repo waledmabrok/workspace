@@ -11,7 +11,7 @@ class CustomButton extends StatelessWidget {
   final bool isLoading;
   final bool border;
   final Color color;
-
+  final Color? borderColor;
   const CustomButton({
     super.key,
     required this.text,
@@ -20,6 +20,7 @@ class CustomButton extends StatelessWidget {
     this.isLoading = false,
     this.border = false,
     this.color = AppColorsDark.mainColor,
+    this.borderColor = AppColorsDark.mainColor,
   });
 
   @override
@@ -36,7 +37,11 @@ class CustomButton extends StatelessWidget {
             borderRadius: BorderRadius.circular(15),
             side: BorderSide(
               color:
-                  border == true ? AppColorsDark.mainColor : Colors.transparent,
+                  border
+                      ? (borderColor ??
+                          AppColorsDark
+                              .mainColor) // ✅ لو ممررتش لون ياخد MainColor
+                      : Colors.transparent,
               width: 1.5,
             ),
           ),
