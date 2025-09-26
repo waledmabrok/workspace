@@ -43,12 +43,11 @@ class _CustomersBalancesPageState extends State<CustomersBalancesPage>
     return list.where((c) {
       final balanceEntry = balances.firstWhere(
         (b) => b.customerId == c.id,
-        orElse:
-            () => CustomerBalance(
-              customerId: c.id,
-              balance: 0.0,
-              updatedAt: DateTime.now(),
-            ),
+        orElse: () => CustomerBalance(
+          customerId: c.id,
+          balance: 0.0,
+          updatedAt: DateTime.now(),
+        ),
       );
       final lastUpdate = balanceEntry.updatedAt ?? DateTime.now();
       return lastUpdate.year == _selectedDate.year &&
@@ -60,43 +59,67 @@ class _CustomersBalancesPageState extends State<CustomersBalancesPage>
   @override
   Widget build(BuildContext context) {
     // تصنيف العملاء إيجابيين/سلبيين
-    final positiveCustomers =
-        customers.where((c) {
-          final balance =
-              balances
-                  .firstWhere(
-                    (b) => b.customerId == c.id,
-                    orElse:
-                        () => CustomerBalance(customerId: c.id, balance: 0.0),
-                  )
-                  .balance;
-          return balance > 0;
-        }).toList();
+    final positiveCustomers = customers.where((c) {
+      final balance = balances
+          .firstWhere(
+            (b) => b.customerId == c.id,
+            orElse: () => CustomerBalance(customerId: c.id, balance: 0.0),
+          )
+          .balance;
+      return balance > 0;
+    }).toList();
 
-    final negativeCustomers =
-        customers.where((c) {
-          final balance =
-              balances
-                  .firstWhere(
-                    (b) => b.customerId == c.id,
-                    orElse:
-                        () => CustomerBalance(customerId: c.id, balance: 0.0),
-                  )
-                  .balance;
-          return balance < 0;
-        }).toList();
+    final negativeCustomers = customers.where((c) {
+      final balance = balances
+          .firstWhere(
+            (b) => b.customerId == c.id,
+            orElse: () => CustomerBalance(customerId: c.id, balance: 0.0),
+          )
+          .balance;
+      return balance < 0;
+    }).toList();
 
     return Scaffold(
       appBar: AppBar(
         forceMaterialTransparency: true,
         title: Center(child: const Text('رصيد العملاء')),
-        bottom: TabBar(
-          labelStyle: TextStyle(color: Colors.white),
-          controller: _tabController,
-          tabs: const [
-            Tab(text: 'المتبقي ليه من المره الي فاتت'),
-            Tab(text: 'الشكك'),
-          ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(60), // ارتفاع التاب بار
+          child: Container(
+            margin: const EdgeInsets.symmetric(
+              horizontal: 8,
+              vertical: 8,
+            ),
+            decoration: BoxDecoration(
+              color: AppColorsDark.bgCardColor, // خلفية الـ TabBar
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: Colors.transparent,
+                width: 0,
+              ),
+            ),
+            child: TabBar(
+              controller: _tabController,
+              indicatorColor: Colors.transparent,
+              indicatorWeight: 0,
+              indicatorPadding: EdgeInsets.zero,
+              dividerColor: Colors.transparent,
+              indicator: BoxDecoration(
+                color: AppColorsDark.mainColor,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              indicatorSize: TabBarIndicatorSize.tab,
+              labelColor: Colors.white,
+              unselectedLabelColor: Colors.white70,
+              overlayColor: MaterialStateProperty.all(
+                Colors.transparent,
+              ),
+              tabs: const [
+                Tab(text: 'المتبقي ليه من المره الي فاتت'),
+                Tab(text: 'الشكك'),
+              ],
+            ),
+          ),
         ),
         actions: [
           // زر اختيار التاريخ
@@ -133,90 +156,89 @@ class _CustomersBalancesPageState extends State<CustomersBalancesPage>
   Widget _buildList(List<Customer> list) {
     return list.isEmpty
         ? const Center(
-          child: Text('لا يوجد سجلات', style: TextStyle(color: Colors.white70)),
-        )
+            child:
+                Text('لا يوجد سجلات', style: TextStyle(color: Colors.white70)),
+          )
         : ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: list.length,
-          itemBuilder: (context, i) {
-            final c = list[i];
-            final balance =
-                balances
-                    .firstWhere(
-                      (b) => b.customerId == c.id,
-                      orElse:
-                          () => CustomerBalance(customerId: c.id, balance: 0.0),
-                    )
-                    .balance; /*
+            padding: const EdgeInsets.all(16),
+            itemCount: list.length,
+            itemBuilder: (context, i) {
+              final c = list[i];
+              final balance = balances
+                  .firstWhere(
+                    (b) => b.customerId == c.id,
+                    orElse: () =>
+                        CustomerBalance(customerId: c.id, balance: 0.0),
+                  )
+                  .balance; /*
             تليفون: ${c.phone ?? "-"}*/
-            return Card(
-              color: AppColorsDark.bgCardColor,
-              child: ListTile(
-                title: Text(
-                  c.name,
-                  style: const TextStyle(color: Colors.white),
-                ),
-                subtitle: Text(
-                  '\nالرصيد: ${balance.toStringAsFixed(2)} ج',
-                  style: const TextStyle(color: Colors.white70),
-                ),
-                trailing: Text(
-                  balance > 0
-                      ? "له ${balance.toStringAsFixed(2)} ج"
-                      : "عليه ${balance.abs().toStringAsFixed(2)} ج",
-                  style: TextStyle(
-                    color: balance > 0 ? Colors.greenAccent : Colors.red,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
+              return Card(
+                color: AppColorsDark.bgCardColor,
+                child: ListTile(
+                  title: Text(
+                    c.name,
+                    style: const TextStyle(color: Colors.white),
                   ),
+                  subtitle: Text(
+                    '\nالرصيد: ${balance.toStringAsFixed(2)} ج',
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  trailing: Text(
+                    balance > 0
+                        ? "له ${balance.toStringAsFixed(2)} ج"
+                        : "عليه ${balance.abs().toStringAsFixed(2)} ج",
+                    style: TextStyle(
+                      color: balance > 0 ? Colors.greenAccent : Colors.red,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                  onTap: () => _adjustBalance(c, balance),
                 ),
-                onTap: () => _adjustBalance(c, balance),
-              ),
-            );
-          },
-        );
+              );
+            },
+          );
   }
 
   Future<void> _adjustBalance(Customer customer, double balance) async {
     final controller = TextEditingController();
     final res = await showDialog<double>(
       context: context,
-      builder:
-          (_) => AlertDialog(
-            backgroundColor: const Color(0xFF1A2233),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            title: Text(
-              "تعديل رصيد ${customer.name}",
-              style: const TextStyle(color: Colors.white),
-            ),
-            content: TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                labelText: "المبلغ (+ له | - عليه)",
-                labelStyle: TextStyle(color: Colors.white70),
-              ),
-              keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text("الغاء"),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF5387FF),
-                ),
-                onPressed: () {
-                  final val = double.tryParse(controller.text) ?? 0.0;
-                  Navigator.pop(context, val);
-                },
-                child: const Text("حفظ"),
-              ),
-            ],
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF1A2233),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Text(
+          "تعديل رصيد ${customer.name}",
+          style: const TextStyle(color: Colors.white),
+        ),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: "المبلغ (+ له | - عليه)",
+            labelStyle: TextStyle(color: Colors.white70),
           ),
+          keyboardType: TextInputType.number,
+          style: const TextStyle(color: Colors.white),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("الغاء"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF5387FF),
+            ),
+            onPressed: () {
+              final val = double.tryParse(controller.text) ?? 0.0;
+              Navigator.pop(context, val);
+            },
+            child: const Text("حفظ"),
+          ),
+        ],
+      ),
     );
 
     if (res != null && res != 0.0) {

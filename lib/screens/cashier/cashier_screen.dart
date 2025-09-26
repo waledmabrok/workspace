@@ -350,12 +350,11 @@ class _CashierScreenState extends State<CashierScreen>
       if (query.isEmpty) {
         _filteredSessions = _sessionsSub;
       } else {
-        _filteredSessions =
-            _sessionsSub
-                .where(
-                  (s) => s.name.toLowerCase().contains(query.toLowerCase()),
-                )
-                .toList();
+        _filteredSessions = _sessionsSub
+            .where(
+              (s) => s.name.toLowerCase().contains(query.toLowerCase()),
+            )
+            .toList();
       }
     });
   }
@@ -673,6 +672,7 @@ class _CashierScreenState extends State<CashierScreen>
 
       final paid = await showSubscriptionPaymentDialog(
         context,
+        s: session,
         customer: customer,
         currentPlan: currentPlan,
         basePrice: basePrice,
@@ -685,8 +685,7 @@ class _CashierScreenState extends State<CashierScreen>
 
       final sale = Sale(
         id: generateId(),
-        description:
-            'اشتراك ${currentPlan.name} للعميل ${name}' +
+        description: 'اشتراك ${currentPlan.name} للعميل ${name}' +
             (_appliedDiscount != null
                 ? " (خصم ${_appliedDiscount!.percent}%)"
                 : ""),
@@ -727,16 +726,15 @@ class _CashierScreenState extends State<CashierScreen>
     // تحديث الواجهة الحالية
     setState(() {
       _sessions.insert(0, session);
-      _filteredSessions =
-          _searchCtrl.text.isEmpty
-              ? _sessions
-              : _sessions
-                  .where(
-                    (s) => s.name.toLowerCase().contains(
+      _filteredSessions = _searchCtrl.text.isEmpty
+          ? _sessions
+          : _sessions
+              .where(
+                (s) => s.name.toLowerCase().contains(
                       _searchCtrl.text.toLowerCase(),
                     ),
-                  )
-                  .toList();
+              )
+              .toList();
 
       _nameCtrl.clear();
       _phoneCtrl.clear();
@@ -762,6 +760,7 @@ class _CashierScreenState extends State<CashierScreen>
     required SubscriptionPlan currentPlan,
     required double basePrice,
     double discountPercent = 0.0,
+    required Session s,
   }) async {
     final paidCtrl = TextEditingController();
     final discountValue = basePrice * (discountPercent / 100);
@@ -770,12 +769,17 @@ class _CashierScreenState extends State<CashierScreen>
     return await showDialog<bool>(
       context: context,
       barrierDismissible: false, // لازم يختار زرار
-      builder: (ctx) {
+      builder: (
+        ctx,
+      ) {
         return StatefulBuilder(
-          builder: (ctx, setDialogState) {
+          builder: (
+            ctx,
+            setDialogState,
+          ) {
             final paidAmount = double.tryParse(paidCtrl.text) ?? 0.0;
             final diff = paidAmount - finalPrice;
-
+            String paymentMethod = "cash";
             String diffText;
             if (diff == 0) {
               diffText = '✅ دفع كامل';
@@ -820,7 +824,223 @@ class _CashierScreenState extends State<CashierScreen>
                 ),
               ),
               actions: [
+                // داخل actions: []
                 ElevatedButton(
+                  onPressed: () async {
+                    final paidAmount = double.tryParse(paidCtrl.text) ?? 0.0;
+                    final diff = paidAmount - finalPrice;
+                    if (paidAmount < finalPrice) {
+                      // رسالة تحذير: المبلغ أقل من المطلوب
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('⚠️ المبلغ المدفوع أقل من المطلوب.'),
+                        ),
+                      );
+                      return; // لا يتم تنفيذ أي شيء
+                    }
+                    if (diff > 0) {
+                      // خصم الفائض من الدرج
+                      await AdminDataService.instance.addSale(
+                        Sale(
+                          id: generateId(),
+                          description: 'سداد الباقي كاش للعميل',
+                          amount: diff,
+                        ),
+                        paymentMethod: 'cash',
+                        updateDrawer: true,
+                        drawerDelta: -diff, // خصم من الدرج بدل الإضافة
+                      );
+                    }
+
+                    final sale = Sale(
+                      id: generateId(),
+                      description:
+                          'جلسة ${s.name} |   منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}',
+                      amount: paidAmount,
+                    );
+
+                    await AdminDataService.instance.addSale(
+                      sale,
+                      paymentMethod: paymentMethod,
+                      customer: _currentCustomer,
+                      updateDrawer: paymentMethod == "cash",
+                    );
+
+                    try {
+                      await _loadDrawerBalance();
+                    } catch (e, st) {
+                      debugPrint('Failed to update drawer: $e\n$st');
+                    }
+                    // 🗑️ مسح الكارت من DB و Session
+                    // 2️⃣ بعد الدفع → مسح الكارت من DB
+
+                    // 5️⃣ اقفل الشيت بعد ما اتأكدنا انه اتمسح
+
+                    // 5️⃣ حدث الsetـ UI
+                    Navigator.pop(ctx, true);
+                    // إشعار للمستخدم بأن الباقي أخذ كاش
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          '💵 الباقي ${diff > 0 ? diff.toStringAsFixed(2) : 0} ج أخذ كاش',
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('تأكيد الدفع بالكامل'),
+                ),
+
+                ElevatedButton(
+                  onPressed: () async {
+                    // required / paid / diff
+                    final requiredAmount = finalPrice;
+                    final paidAmount = double.tryParse(paidCtrl.text) ?? 0.0;
+                    final diff = paidAmount - requiredAmount;
+                    if (diff > 0) {
+                      // إضافة الفائض للدرج
+                      await AdminDataService.instance.addSale(
+                        Sale(
+                          id: generateId(),
+                          description: 'فائض دفع العميل على الحساب',
+                          amount: diff,
+                        ),
+                        paymentMethod: 'cash',
+                        updateDrawer: true,
+                      );
+                    } /* else if (diff < 0) {
+                      // خصم الفرق من الدرج
+                      await AdminDataService.instance.addSale(
+                        Sale(
+                          id: generateId(),
+                          description: 'العميل دفع أقل من المطلوب على الحساب',
+                          amount: diff.abs(),
+                        ),
+                        paymentMethod: 'cash',
+                        updateDrawer: true,
+                        drawerDelta: -diff.abs(), // خصم من الدرج
+                      );
+                    }*/
+
+                    // ---- تحديث رصيد العميل بشكل صحيح ----
+                    // 1) نحدد customerId الهدف: نفضل s.customerId ثم _currentCustomer
+                    String? targetCustomerId =
+                        s.customerId ?? _currentCustomer?.id;
+
+                    // 2) لو لسه فاضي حاول نبحث عن العميل بالاسم، وإن لم يوجد - ننشئ واحد جديد
+                    if (targetCustomerId == null || targetCustomerId.isEmpty) {
+                      // حاول إيجاد العميل في DB بحسب الاسم
+                      final found = await CustomerDb.getByName(s.name);
+                      if (found != null) {
+                        targetCustomerId = found.id;
+                      } else {
+                        // لو اسم موجود في الحقل ونفّذنا إنشاء: ننشئ عميل جديد ونتخزن
+                        if (s.name.trim().isNotEmpty) {
+                          final newCustomer = Customer(
+                            id: generateId(),
+                            name: s.name,
+                            phone: "011",
+                            notes: null,
+                          );
+                          await CustomerDb.insert(newCustomer);
+                          // حدث الذاكرة المحلية إن وُجد (AdminDataService)
+                          try {
+                            AdminDataService.instance.customers.add(
+                              newCustomer,
+                            );
+                          } catch (_) {}
+                          targetCustomerId = newCustomer.id;
+                        }
+                      }
+                    }
+
+                    if (targetCustomerId != null &&
+                        targetCustomerId.isNotEmpty) {
+                      // احصل الرصيد القديم من الذاكرة (أو استخدم 0)
+                      final oldBalance =
+                          AdminDataService.instance.customerBalances.firstWhere(
+                        (b) => b.customerId == targetCustomerId,
+                        orElse: () => CustomerBalance(
+                          customerId: targetCustomerId!,
+                          balance: 0.0,
+                        ),
+                      );
+
+                      final newBalance = oldBalance.balance + diff;
+                      final updated = CustomerBalance(
+                        customerId: targetCustomerId,
+                        balance: newBalance,
+                      );
+
+                      // اكتب للـ DB
+                      await CustomerBalanceDb.upsert(updated);
+
+                      // حدّث الذاكرة (AdminDataService)
+                      final idx =
+                          AdminDataService.instance.customerBalances.indexWhere(
+                        (b) => b.customerId == targetCustomerId,
+                      );
+                      if (idx >= 0) {
+                        AdminDataService.instance.customerBalances[idx] =
+                            updated;
+                      } else {
+                        AdminDataService.instance.customerBalances.add(
+                          updated,
+                        );
+                      }
+                    } else {
+                      // لم نتمكن من إيجاد/إنشاء عميل --> تسجّل ملاحظۀ debug
+                      debugPrint(
+                        'No customer id for session ${s.id}; balance not updated.',
+                      );
+                    }
+
+                    // ---- حفظ المبيعة ----
+                    final sale = Sale(
+                      id: generateId(),
+                      description:
+                          "اشتراك ${currentPlan.name} للعميل ${customer.name}"
+                          "${discountPercent > 0 ? " (خصم $discountPercent%)" : ""}",
+                      amount: finalPrice,
+                    );
+
+                    await AdminDataService.instance.addSale(
+                      sale,
+                      paymentMethod: paymentMethod,
+                      customer: _currentCustomer,
+                      updateDrawer: paymentMethod == "cash",
+                    );
+
+                    try {
+                      await _loadDrawerBalance();
+                    } catch (e, st) {
+                      debugPrint('Failed to update drawer: $e\n$st');
+                    }
+                    // 🗑️ مسح الكارت من DB و Session
+
+                    // 5️⃣ حدث الـ UI
+                    Navigator.pop(ctx, true);
+
+                    // إشعار للمستخدم (باقي/له/عليه)
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          diff == 0
+                              ? '✅ دفع كامل: ${paidAmount.toStringAsFixed(2)} ج'
+                              : diff > 0
+                                  ? '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي له ${diff.toStringAsFixed(2)} ج عندك'
+                                  : '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي عليك ${(diff.abs()).toStringAsFixed(2)} ج',
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('علي الحساب'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('إلغاء'),
+                ),
+              ],
+              /* ElevatedButton(
                   onPressed: () async {
                     if (paidAmount < finalPrice) {
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -854,7 +1074,7 @@ class _CashierScreenState extends State<CashierScreen>
                   onPressed: () => Navigator.pop(ctx, false), // ✅ هترجع false
                   child: const Text("إلغاء"),
                 ),
-              ],
+              ],*/
             );
           },
         );
@@ -1000,16 +1220,15 @@ class _CashierScreenState extends State<CashierScreen>
                     vertical: 14,
                   ),
                 ),
-                items:
-                    AdminDataService.instance.products.map((p) {
-                      return DropdownMenuItem(
-                        value: p,
-                        child: Text(
-                          '${p.name} (${p.price} ج - ${p.stock} متاح)',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      );
-                    }).toList(),
+                items: AdminDataService.instance.products.map((p) {
+                  return DropdownMenuItem(
+                    value: p,
+                    child: Text(
+                      '${p.name} (${p.price} ج - ${p.stock} متاح)',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  );
+                }).toList(),
                 onChanged: (val) {
                   setSheetState(() => selectedProduct = val);
                 },
@@ -1143,7 +1362,6 @@ class _CashierScreenState extends State<CashierScreen>
                           ),
                         ),
                       ),
-
                       IconButton(
                         icon: const Icon(Icons.delete, color: Colors.redAccent),
                         onPressed: () async {
@@ -1227,17 +1445,17 @@ class _CashierScreenState extends State<CashierScreen>
               ),
               ...(!onlyAdd
                   ? [
-                    CustomButton(
-                      text: "إتمام ودفع",
-                      onPressed: () async {
-                        Navigator.pop(context);
+                      CustomButton(
+                        text: "إتمام ودفع",
+                        onPressed: () async {
+                          Navigator.pop(context);
 
-                        _completeAndPayForSession(s);
-                      },
-                      infinity: false,
-                      color: Colors.green,
-                    ),
-                  ]
+                          _completeAndPayForSession(s);
+                        },
+                        infinity: false,
+                        color: Colors.green,
+                      ),
+                    ]
                   : []),
             ],
           ),
@@ -1302,11 +1520,11 @@ class _CashierScreenState extends State<CashierScreen>
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            String? customerId = s.customerId ?? _currentCustomer?.id;
             double finalTotal = timeCharge + productsTotal - discountValue;
             /*  (الرصيد: ${AdminDataService.instance.customerBalances.firstWhere((b) => b.customerId == s.customerId, orElse: () => CustomerBalance(customerId: s.customerId ?? '', balance: 0.0)).balance.toStringAsFixed(2)} ج)*/
             return AlertDialog(
               title: Text('إيصال الدفع - ${s.name} '),
-
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1347,6 +1565,17 @@ class _CashierScreenState extends State<CashierScreen>
                     // عرض الباقي أو الفائض
                     Builder(
                       builder: (_) {
+                        // تحديث الرصيد الفعلي من AdminDataService
+                        double updatedBalance = 0.0;
+                        if (s.customerId != null) {
+                          final b = AdminDataService.instance.customerBalances
+                              .firstWhere(
+                            (b) => b.customerId == s.customerId,
+                            orElse: () => CustomerBalance(
+                                customerId: s.customerId!, balance: 0),
+                          );
+                          updatedBalance = b.balance;
+                        }
                         final paidAmount =
                             double.tryParse(paidCtrl.text) ?? 0.0;
                         final diff = paidAmount - finalTotal;
@@ -1395,6 +1624,52 @@ class _CashierScreenState extends State<CashierScreen>
                         paymentMethod: 'cash',
                         updateDrawer: true,
                         drawerDelta: -diff, // خصم من الدرج بدل الإضافة
+                      );
+// بعد تحديث الرصيد في DB والذاكرة
+                      // بعد ما تحدث الرصيد في DB
+                      // لو id فاضي، حاول تجيب العميل بالاسم
+                      if (customerId == null || customerId!.isEmpty) {
+                        final found = await CustomerDb.getByName(s.name);
+                        if (found != null) {
+                          customerId = found.id;
+                        }
+                      }
+
+// لو لسه فاضي، ممكن تنشئ عميل جديد
+                      if (customerId == null) {
+                        final newCustomer = Customer(
+                          id: generateId(),
+                          name: s.name,
+                        );
+                        await CustomerDb.insert(newCustomer);
+                        customerId = newCustomer.id;
+                      }
+
+// دلوقتي نقدر نجيب رصيد العميل
+                      final double newBalance =
+                          await CustomerBalanceDb.getBalance(customerId!);
+
+// عرض رصيد العميل
+                      await showDialog(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          title: const Text("رصيد العميل الحالي"),
+                          content: Text(
+                            newBalance > 0
+                                ? "💰 له: ${newBalance.toStringAsFixed(2)} ج"
+                                : newBalance < 0
+                                    ? "💸 عليه: ${newBalance.abs().toStringAsFixed(2)} ج"
+                                    : "✅ الرصيد صفر",
+                            style: const TextStyle(
+                                fontSize: 18, fontWeight: FontWeight.bold),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx),
+                              child: const Text("حسناً"),
+                            ),
+                          ],
+                        ),
                       );
 
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -1501,17 +1776,14 @@ class _CashierScreenState extends State<CashierScreen>
                     if (targetCustomerId != null &&
                         targetCustomerId.isNotEmpty) {
                       // احصل الرصيد القديم من الذاكرة (أو استخدم 0)
-                      final oldBalance = AdminDataService
-                          .instance
-                          .customerBalances
-                          .firstWhere(
-                            (b) => b.customerId == targetCustomerId,
-                            orElse:
-                                () => CustomerBalance(
-                                  customerId: targetCustomerId!,
-                                  balance: 0.0,
-                                ),
-                          );
+                      final oldBalance =
+                          AdminDataService.instance.customerBalances.firstWhere(
+                        (b) => b.customerId == targetCustomerId,
+                        orElse: () => CustomerBalance(
+                          customerId: targetCustomerId!,
+                          balance: 0.0,
+                        ),
+                      );
 
                       final newBalance = oldBalance.balance + diff;
                       final updated = CustomerBalance(
@@ -1579,8 +1851,8 @@ class _CashierScreenState extends State<CashierScreen>
                           diff == 0
                               ? '✅ دفع كامل: ${paidAmount.toStringAsFixed(2)} ج'
                               : diff > 0
-                              ? '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي له ${diff.toStringAsFixed(2)} ج عندك'
-                              : '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي عليك ${(diff.abs()).toStringAsFixed(2)} ج',
+                                  ? '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي له ${diff.toStringAsFixed(2)} ج عندك'
+                                  : '✅ دفع ${paidAmount.toStringAsFixed(2)} ج — باقي عليك ${(diff.abs()).toStringAsFixed(2)} ج',
                         ),
                       ),
                     );
@@ -1596,6 +1868,43 @@ class _CashierScreenState extends State<CashierScreen>
           },
         );
       },
+    );
+  }
+
+  Future<void> _showCustomerBalance(Session s, double diff) async {
+    // احصل customerId
+    String? targetCustomerId = s.customerId ?? _currentCustomer?.id;
+
+    double newBalance = 0.0;
+    if (targetCustomerId != null) {
+      final balanceEntry =
+          AdminDataService.instance.customerBalances.firstWhere(
+        (b) => b.customerId == targetCustomerId,
+        orElse: () =>
+            CustomerBalance(customerId: targetCustomerId, balance: 0.0),
+      );
+      newBalance = balanceEntry.balance;
+    }
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("رصيد العميل الحالي"),
+        content: Text(
+          newBalance > 0
+              ? "💰 له: ${newBalance.toStringAsFixed(2)} ج"
+              : newBalance < 0
+                  ? "💸 عليه: ${newBalance.abs().toStringAsFixed(2)} ج"
+                  : "✅ الرصيد صفر",
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("حسناً"),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1650,10 +1959,9 @@ class _CashierScreenState extends State<CashierScreen>
     final shift = rows.first;
 
     // null-safe id
-    final shiftId =
-        shift['id'] is int
-            ? shift['id'] as int
-            : int.tryParse(shift['id'].toString()) ?? 0;
+    final shiftId = shift['id'] is int
+        ? shift['id'] as int
+        : int.tryParse(shift['id'].toString()) ?? 0;
 
     final summary = await DbHelper.instance.getShiftSummary(shiftId);
 
@@ -1830,7 +2138,6 @@ class _CashierScreenState extends State<CashierScreen>
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 28),
             ),
           ),
-
           backgroundColor: Colors.transparent,
           elevation: 0,
           actions: [
@@ -1979,19 +2286,17 @@ class _CashierScreenState extends State<CashierScreen>
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder:
-                            (_) => ExpiringSessionsPage(
-                              sessionsSub: _sessions,
-                              onViewed: () async {
-                                // await NotificationsDb.markAllAsRead();
-                                _loadBadge(); // صفر بعد المشاهدة
-                              },
-                            ),
+                        builder: (_) => ExpiringSessionsPage(
+                          sessionsSub: _sessions,
+                          onViewed: () async {
+                            // await NotificationsDb.markAllAsRead();
+                            _loadBadge(); // صفر بعد المشاهدة
+                          },
+                        ),
                       ),
                     ).then((_) => _loadBadge());
                   },
                 ),
-
                 if (_badgeCount > 0)
                   Positioned(
                     right: 4,
@@ -2032,8 +2337,8 @@ class _CashierScreenState extends State<CashierScreen>
                 },
                 controller: _searchCtrl,
                 hint: 'البحث',
-                validator:
-                    (v) => (v?.trim().isEmpty ?? true) ? 'ادخل الاسم' : null,
+                validator: (v) =>
+                    (v?.trim().isEmpty ?? true) ? 'ادخل الاسم' : null,
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
@@ -2075,9 +2380,8 @@ class _CashierScreenState extends State<CashierScreen>
                     child: CustomFormField(
                       controller: _nameCtrl,
                       hint: 'اسم العميل',
-                      validator:
-                          (v) =>
-                              (v?.trim().isEmpty ?? true) ? 'ادخل الاسم' : null,
+                      validator: (v) =>
+                          (v?.trim().isEmpty ?? true) ? 'ادخل الاسم' : null,
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
@@ -2379,12 +2683,11 @@ class _CashierScreenState extends State<CashierScreen>
   /// 🔹 دالة تبني لستة المشتركين
   Widget _buildSubscribersList({required bool withPlan}) {
     final searchText = _searchCtrl.text.toLowerCase();
-    final filtered =
-        _sessions.where((s) {
-          final matchesType = withPlan ? s.type == "باقة" : s.type == "حر";
-          final matchesSearch = s.name.toLowerCase().contains(searchText);
-          return matchesType && matchesSearch;
-        }).toList();
+    final filtered = _sessions.where((s) {
+      final matchesType = withPlan ? s.type == "باقة" : s.type == "حر";
+      final matchesSearch = s.name.toLowerCase().contains(searchText);
+      return matchesType && matchesSearch;
+    }).toList();
 
     if (filtered.isEmpty)
       return const Center(
@@ -2400,12 +2703,11 @@ class _CashierScreenState extends State<CashierScreen>
         final spentMinutes = getSessionMinutes(s);
         final endTime = getSubscriptionEnd(s);
 
-        String timeInfo2 =
-            s.subscription != null
-                ? (endTime != null
-                    ? "من: ${s.start.toLocal()} ⇢ ينتهي: ${endTime.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة"
-                    : "من: ${s.start.toLocal()} ⇢ غير محدود ⇢ مضى: ${spentMinutes} دقيقة")
-                : "من: ${s.start.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة";
+        String timeInfo2 = s.subscription != null
+            ? (endTime != null
+                ? "من: ${s.start.toLocal()} ⇢ ينتهي: ${endTime.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة"
+                : "من: ${s.start.toLocal()} ⇢ غير محدود ⇢ مضى: ${spentMinutes} دقيقة")
+            : "من: ${s.start.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة";
 
         final hours = spentMinutes ~/ 60; // القسمة الصحيحة
         final minutes = spentMinutes % 60; // الباقي
@@ -2427,7 +2729,6 @@ class _CashierScreenState extends State<CashierScreen>
             ),
           ),
           margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -2457,11 +2758,10 @@ class _CashierScreenState extends State<CashierScreen>
                           await showModalBottomSheet(
                             context: context,
                             isScrollControlled: true,
-                            builder:
-                                (_) => _buildAddProductsAndPay(
-                                  s,
-                                  onlyAdd: true,
-                                ), // parameter جديد
+                            builder: (_) => _buildAddProductsAndPay(
+                              s,
+                              onlyAdd: true,
+                            ), // parameter جديد
                           );
                         },
                       ),
@@ -2469,17 +2769,15 @@ class _CashierScreenState extends State<CashierScreen>
                     const SizedBox(width: 12),
                     Expanded(
                       child: CustomButton(
-                        color:
-                            s.isPaused
-                                ? Colors.transparent
-                                : AppColorsDark.mainColor,
+                        color: s.isPaused
+                            ? Colors.transparent
+                            : AppColorsDark.mainColor,
                         border: s.isPaused ? false : true,
                         text: s.isPaused ? 'استكمال الوقت' : 'ايقاف مؤقت',
                         onPressed:
                             s.isActive ? () => _togglePauseSessionFor(s) : null,
                       ),
                     ),
-
                     const SizedBox(width: 12),
                     Expanded(
                       child: CustomButton(
@@ -2570,12 +2868,11 @@ class _CashierScreenState extends State<CashierScreen>
 
   Widget _buildSubscribersList3({required bool withPlan}) {
     final searchText = _searchCtrl.text.toLowerCase();
-    final filtered =
-        _sessions.where((s) {
-          final matchesType = withPlan ? s.type == "باقة" : s.type == "حر";
-          final matchesSearch = s.name.toLowerCase().contains(searchText);
-          return matchesType && matchesSearch;
-        }).toList();
+    final filtered = _sessions.where((s) {
+      final matchesType = withPlan ? s.type == "باقة" : s.type == "حر";
+      final matchesSearch = s.name.toLowerCase().contains(searchText);
+      return matchesType && matchesSearch;
+    }).toList();
 
     if (filtered.isEmpty) return const Center(child: Text("لا يوجد بيانات"));
 
@@ -2605,10 +2902,9 @@ class _CashierScreenState extends State<CashierScreen>
         }
 
         // دقائق زائدة بالفعل الآن (بحدود اليوم)
-        final extraNow =
-            (allowedToday > 0)
-                ? (spentToday - allowedToday).clamp(0, double.infinity).toInt()
-                : 0;
+        final extraNow = (allowedToday > 0)
+            ? (spentToday - allowedToday).clamp(0, double.infinity).toInt()
+            : 0;
 
         // دقائق جديدة لم تُدفع بعد (قد تكون مغطاة جزئياً بالباقة)
         final minutesToCharge =
@@ -2621,12 +2917,11 @@ class _CashierScreenState extends State<CashierScreen>
           // قبل دقائق الجديدة كان spentToday - minutesToCharge
           final priorSpentToday =
               (spentToday - minutesToCharge).clamp(0, spentToday).toInt();
-          final remainingAllowanceBefore = (allowedToday - priorSpentToday)
-              .clamp(0, allowedToday);
-          coveredByPlan =
-              (minutesToCharge <= remainingAllowanceBefore)
-                  ? minutesToCharge
-                  : remainingAllowanceBefore;
+          final remainingAllowanceBefore =
+              (allowedToday - priorSpentToday).clamp(0, allowedToday);
+          coveredByPlan = (minutesToCharge <= remainingAllowanceBefore)
+              ? minutesToCharge
+              : remainingAllowanceBefore;
           extraIfPayNow = minutesToCharge - coveredByPlan;
         } else {
           coveredByPlan = 0;
@@ -2643,17 +2938,15 @@ class _CashierScreenState extends State<CashierScreen>
         // نص العرض
         final startStr = s.start.toLocal().toString().split('.').first;
         final endTime = getSubscriptionEnd(s);
-        final endStr =
-            endTime != null
-                ? endTime.toLocal().toString().split('.').first
-                : 'غير محدود';
+        final endStr = endTime != null
+            ? endTime.toLocal().toString().split('.').first
+            : 'غير محدود';
 
         String timeInfo;
         if (s.subscription != null) {
-          String dailyInfo =
-              (allowedToday > 0)
-                  ? 'حد اليوم: ${_formatHoursMinutes(allowedToday)} • مضى اليوم: ${_formatHoursMinutes(spentToday)} • متبقي: ${_formatHoursMinutes((allowedToday - spentToday).clamp(0, allowedToday))}'
-                  : 'حد اليوم: غير محدود';
+          String dailyInfo = (allowedToday > 0)
+              ? 'حد اليوم: ${_formatHoursMinutes(allowedToday)} • مضى اليوم: ${_formatHoursMinutes(spentToday)} • متبقي: ${_formatHoursMinutes((allowedToday - spentToday).clamp(0, allowedToday))}'
+              : 'حد اليوم: غير محدود';
           timeInfo =
               'من: $startStr ⇢ ينتهي: $endStr\nمضى الكلي: ${_formatHoursMinutes(totalMinutes)} — $dailyInfo';
           if (extraNow > 0) {
@@ -2677,7 +2970,6 @@ class _CashierScreenState extends State<CashierScreen>
                 if (s.isActive)
                   ElevatedButton(
                     onPressed: () => _togglePauseSessionFor(s),
-
                     child: Text(s.isPaused ? 'استئناف' : 'ايقاف مؤقت'),
                   ),
                 const SizedBox(width: 6),

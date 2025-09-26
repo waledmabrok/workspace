@@ -97,7 +97,7 @@ class _HomeRouterState extends State<HomeRouter> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const Text(
-                  'WorkSpace System',
+                  'XSpace System',
                   style: TextStyle(fontSize: 28, fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 24),
@@ -117,7 +117,6 @@ class _HomeRouterState extends State<HomeRouter> {
                       'واجهة الكاشير',
                       Icons.point_of_sale,
                       const CashierScreen(),
-
                       correctPassword:
                           AdminDataService.instance.cashierPassword,
                     ),
@@ -177,32 +176,30 @@ class _HomeRouterState extends State<HomeRouter> {
 
     return await showDialog<bool>(
           context: context,
-          builder:
-              (ctx) => AlertDialog(
-                title: const Text("أدخل كلمة المرور"),
-
-                content: CustomFormField(
-                  hint: "كلمة المرور",
-                  controller: controller,
-                  isPassword: true,
-                ),
-                /*TextField(
+          builder: (ctx) => AlertDialog(
+            title: const Text("أدخل كلمة المرور"),
+            content: CustomFormField(
+              hint: "كلمة المرور",
+              controller: controller,
+              isPassword: true,
+            ),
+            /*TextField(
                   controller: controller,
                   obscureText: true,
                   decoration: const InputDecoration(hintText: "كلمة المرور"),
                   onSubmitted: (_) => submit(ctx), // هنا Enter هيشتغل
                 ),*/
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child: const Text("إلغاء"),
-                  ),
-                  ElevatedButton(
-                    onPressed: () => submit(ctx),
-                    child: const Text("دخول"),
-                  ),
-                ],
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text("إلغاء"),
               ),
+              ElevatedButton(
+                onPressed: () => submit(ctx),
+                child: const Text("دخول"),
+              ),
+            ],
+          ),
         ) ??
         false;
   }

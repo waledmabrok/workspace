@@ -328,17 +328,15 @@ class AdminDataService {
 
     // فك الـ JSON وارجاع هيكل مرتب
     return rows.map((r) {
-      final createdAt =
-          r['createdAt'] is int
-              ? DateTime.fromMillisecondsSinceEpoch(r['createdAt'] as int)
-              : (r['createdAt'] != null
-                  ? DateTime.tryParse(r['createdAt'].toString())
-                  : null);
+      final createdAt = r['createdAt'] is int
+          ? DateTime.fromMillisecondsSinceEpoch(r['createdAt'] as int)
+          : (r['createdAt'] != null
+              ? DateTime.tryParse(r['createdAt'].toString())
+              : null);
       Map<String, dynamic> reportJson = {};
       try {
-        reportJson =
-            jsonDecode(r['reportJson']?.toString() ?? '{}')
-                as Map<String, dynamic>;
+        reportJson = jsonDecode(r['reportJson']?.toString() ?? '{}')
+            as Map<String, dynamic>;
       } catch (_) {
         reportJson = {};
       }
@@ -364,18 +362,16 @@ class AdminDataService {
     final r = rows.first;
     Map<String, dynamic> reportJson = {};
     try {
-      reportJson =
-          jsonDecode(r['reportJson']?.toString() ?? '{}')
-              as Map<String, dynamic>;
+      reportJson = jsonDecode(r['reportJson']?.toString() ?? '{}')
+          as Map<String, dynamic>;
     } catch (_) {
       reportJson = {};
     }
-    final createdAt =
-        r['createdAt'] is int
-            ? DateTime.fromMillisecondsSinceEpoch(r['createdAt'] as int)
-            : (r['createdAt'] != null
-                ? DateTime.tryParse(r['createdAt'].toString())
-                : null);
+    final createdAt = r['createdAt'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(r['createdAt'] as int)
+        : (r['createdAt'] != null
+            ? DateTime.tryParse(r['createdAt'].toString())
+            : null);
     return {
       'id': r['id'],
       'shiftId': r['shiftId'],
@@ -500,6 +496,48 @@ class AdminDataService {
     discounts.removeWhere((d) => d.id == id);
   }
 
+  ///========================Clear All data
+  Future<void> clearAllData() async {
+    final db = await DbHelper.instance.database;
+
+    // مسح جميع الجداول المهمة
+    final tables = [
+      //'subscriptions',
+      'sessions',
+      'customer_subscriptions',
+      'notifications',
+      'cart_items',
+      //'rooms',
+      'room_bookings',
+      'expenses',
+      'sales',
+      'discounts',
+      'customers',
+      'customer_balances',
+      'shifts',
+      'shift_transactions',
+      'shift_reports',
+    ];
+
+    for (final table in tables) {
+      await db.delete(table);
+    }
+
+    // إعادة تهيئة الذاكرة المحلية
+    subscriptions.clear();
+
+    expenses.clear();
+    sales.clear();
+    discounts.clear();
+    customers.clear();
+    customerBalances.clear();
+
+    // إعادة رصيد الدرج للصفر
+    drawerBalance = 0.0;
+    await FinanceDb.setDrawerBalance(0.0);
+  }
+
+  ///
   //=============room
 
   // ------------------- الإحصائيات -------------------

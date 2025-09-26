@@ -4,6 +4,7 @@ import 'package:workspace/screens/admin/products_page.dart';
 import 'package:workspace/screens/admin/sales_page.dart';
 import 'package:workspace/screens/admin/subscriptions_page.dart';
 import 'package:workspace/screens/admin/CustomersBalancesPage.dart';
+import 'package:workspace/widget/buttom.dart';
 import 'dart:math';
 import '../../core/db_helper_Subscribe.dart';
 import '../../core/data_service.dart';
@@ -14,6 +15,7 @@ import 'MAin_dashboard.dart';
 import 'discounts_page.dart';
 import 'finance_page.dart';
 import 'Room.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -79,7 +81,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           MaterialPageRoute(builder: (_) => RoomsPage()),
         ),
       ),
-
       _AdminCardData(
         'الوقت العادي',
         Icons.hourglass_bottom,
@@ -112,7 +113,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           MaterialPageRoute(builder: (_) => DashboardPagee()),
         ),
       ),
-
       _AdminCardData(
         'نسبه الارباح',
         Icons.show_chart,
@@ -176,28 +176,27 @@ class _AdminDashboardState extends State<AdminDashboard> {
       final controller = TextEditingController();
       return showDialog<String>(
         context: context,
-        builder:
-            (ctx) => AlertDialog(
-              title: const Text("أدخل كلمة السر الجديدة"),
-              content: TextField(
-                controller: controller,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  hintText: "كلمة السر الجديدة",
-                ),
-                onSubmitted: (_) => Navigator.pop(ctx, controller.text),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, null),
-                  child: const Text("إلغاء"),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx, controller.text),
-                  child: const Text("حفظ"),
-                ),
-              ],
+        builder: (ctx) => AlertDialog(
+          title: const Text("أدخل كلمة السر الجديدة"),
+          content: TextField(
+            controller: controller,
+            obscureText: true,
+            decoration: const InputDecoration(
+              hintText: "كلمة السر الجديدة",
             ),
+            onSubmitted: (_) => Navigator.pop(ctx, controller.text),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, null),
+              child: const Text("إلغاء"),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, controller.text),
+              child: const Text("حفظ"),
+            ),
+          ],
+        ),
       );
     }
 
@@ -207,52 +206,46 @@ class _AdminDashboardState extends State<AdminDashboard> {
         title: Center(
           child: const Text(
             'لوحة الأدمن',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 25),
           ),
         ),
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.lock_reset),
-            tooltip: "تغيير كلمة السر",
+            icon: Icon(Icons.delete),
+            color: Colors.red,
+            tooltip: "مسح البيانات",
             onPressed: () async {
-              final role = await showDialog<String>(
+              final confirm = await showDialog<bool>(
                 context: context,
-                builder:
-                    (ctx) => SimpleDialog(
-                      title: const Text("اختر الحساب"),
-                      children: [
-                        SimpleDialogOption(
-                          onPressed: () => Navigator.pop(ctx, "admin"),
-                          child: const Text("الأدمن"),
-                        ),
-                        SimpleDialogOption(
-                          onPressed: () => Navigator.pop(ctx, "cashier"),
-                          child: const Text("الكاشير"),
-                        ),
-                      ],
+                builder: (_) => AlertDialog(
+                  title: Text('تأكيد'),
+                  content: Text('هل أنت متأكد أنك تريد مسح جميع البيانات؟'),
+                  actions: [
+                    CustomButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      text: 'إلغاء',
+                      infinity: false,
+                      border: true,
                     ),
+                    CustomButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      text: 'مسح',
+                      infinity: false,
+                    ),
+                  ],
+                ),
               );
 
-              if (role != null) {
-                final newPass = await _askForNewPassword(context);
-                if (newPass != null && newPass.isNotEmpty) {
-                  if (role == "admin") {
-                    AdminDataService.instance.updateAdminPassword(newPass);
-                  } else {
-                    AdminDataService.instance.updateCashierPassword(newPass);
-                  }
-
-                  setState(() {}); // لتحديث الواجهة لو مطلوب
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text("تم تغيير كلمة سر $role")),
-                  );
-                }
+              if (confirm == true) {
+                await AdminDataService.instance.clearAllData();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('تم مسح جميع البيانات ✅')),
+                );
               }
             },
           ),
-
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () => setState(() {}),
@@ -260,20 +253,31 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
         ],
       ),
-
       body: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: GridView.builder(
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2, // شبكه 2 عمود
-            mainAxisSpacing: 25,
-            crossAxisSpacing: 25,
-            childAspectRatio: 2.6,
-          ),
-          itemCount: cards.length,
-          itemBuilder: (context, i) => AdminCard(data: cards[i]),
-        ),
-      ),
+          padding: const EdgeInsets.all(20.0),
+          child: ListView.builder(
+            itemCount: (cards.length / 2).ceil(),
+            padding: const EdgeInsets.all(12), // مسافة من الحواف لو عايز
+            itemBuilder: (context, i) {
+              final first = cards[i * 2];
+              final second =
+                  (i * 2 + 1 < cards.length) ? cards[i * 2 + 1] : null;
+
+              return Padding(
+                padding:
+                    const EdgeInsets.only(bottom: 25), // المسافة بين الصفوف
+                child: Row(
+                  children: [
+                    Expanded(child: AdminCard(data: first)),
+                    if (second != null) ...[
+                      SizedBox(width: 25), // المسافة بين الأعمدة
+                      Expanded(child: AdminCard(data: second)),
+                    ],
+                  ],
+                ),
+              );
+            },
+          )),
     );
   }
 }
@@ -294,6 +298,7 @@ class AdminCard extends StatelessWidget {
     return InkWell(
       onTap: data.onTap,
       child: Container(
+        height: 200,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
