@@ -1,69 +1,56 @@
-name: Flutter CI
+name: Build Flutter Apps
 
 on:
   push:
-    branches: [ "main" ]   # أو غيرها حسب الفرع اللي بتشتغل عليه
-  pull_request:
-    branches: [ "main" ]
+    branches:
+      - master
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v3
+      # سحب الكود من GitHub
+      - uses: actions/checkout@v3
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      # إعداد Flutter
+      - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.0' # غيرها حسب نسخة Flutter اللي عندك
+          flutter-version: '3.24.0' # غيرها حسب نسختك
 
-      - name: Install dependencies
-        run: flutter pub get
+      # تثبيت dependencies
+      - run: flutter pub get
 
-      # ✅ Build APK
-      - name: Build APK
-        run: flutter build apk --release
+      # 🟢 Build APK
+      - run: flutter build apk --release
 
-      # ✅ Build AppBundle (AAB)
-      - name: Build AppBundle
-        run: flutter build appbundle --release
+      # 🟢 Build Web
+      - run: flutter build web --release
 
-      # ✅ رفع الـ APK و AAB كـ artifacts عشان تقدر تنزلهم
-      - name: Upload Android Artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: android-builds
-          path: build/app/outputs/flutter-apk/*.apk
-
-      - name: Upload AppBundle
-        uses: actions/upload-artifact@v3
-        with:
-          name: appbundle
-          path: build/app/outputs/bundle/release/*.aab
-
-  build-windows:
+      # 🟢 Build Windows (لازم نجربه على Windows runner مش Ubuntu)
+  build_windows:
     runs-on: windows-latest
-
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v3
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: actions/checkout@v3
+      - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.0'
+          flutter-version: '3.24.0'
+      - run: flutter pub get
+      - run: flutter build windows --release
 
-      - name: Install dependencies
-        run: flutter pub get
-
-      # ✅ Build Windows EXE
-      - name: Build Windows
-        run: flutter build windows --release
-
-      - name: Upload Windows Build
-        uses: actions/upload-artifact@v3
+  # ✅ رفع النتائج كـ Artifact تقدر تحمّلها من GitHub
+  upload-artifacts:
+    needs: [build, build_windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v3
         with:
-          name: windows-build
-          path: build/windows/runner/Release/
+          path: ./artifacts
+      - uses: actions/upload-artifact@v3
+        with:
+          name: flutter-builds
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/web
+            build/windows/runner/Release
