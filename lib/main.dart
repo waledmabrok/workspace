@@ -66,13 +66,11 @@ class WorkspaceCashierApp extends StatelessWidget {
             foregroundColor: Colors.white,
             disabledBackgroundColor: Colors.transparent,
             backgroundColor: AppColorsDark.bgColor,
-
             overlayColor: Colors.blueAccent.withOpacity(0.0),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(15),
               side: BorderSide(color: AppColorsDark.mainColor, width: 1.5),
             ),
-
             textStyle: const TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 17,
@@ -136,24 +134,20 @@ class WorkspaceCashierApp extends StatelessWidget {
           selectionColor: Colors.blueAccent, // لون تحديد النص
           selectionHandleColor: Colors.blueAccent, // لون الهاندلز بتاعة التحديد
         ),
-
-        // تخصيص أزرار ElevatedButton (زي زرار الدخول)
-        /*  elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF5387FF),
-            foregroundColor: Colors.white,
-            textStyle: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
+        snackBarTheme: SnackBarThemeData(
+          backgroundColor: const Color(0xFF1A2233), // لون الخلفية الداكن
+          contentTextStyle: const TextStyle(
+            color: Colors.white, // لون النص
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
           ),
-        ),*/
+          behavior: SnackBarBehavior.floating, // يظهر بشكل floating
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 6,
+        ),
       ),
-
       home: const Directionality(
         textDirection: TextDirection.rtl,
         child: HomeRouter(),
