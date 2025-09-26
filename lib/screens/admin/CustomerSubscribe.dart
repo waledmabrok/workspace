@@ -54,7 +54,18 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
   }
 
   int _totalMinutesSoFar(Session s) {
-    if (s.isPaused) return s.elapsedMinutes;
+    // لو الجلسة متقفلة
+    if (!s.isActive) {
+      final end = s.end ?? s.start;
+      return end.difference(s.start).inMinutes;
+    }
+
+    // لو الجلسة متوقفة مؤقتاً
+    if (s.isPaused) {
+      return s.elapsedMinutes;
+    }
+
+    // لو شغالة دلوقتي
     final now = DateTime.now();
     final since = s.pauseStart ?? s.start;
     return s.elapsedMinutes + now.difference(since).inMinutes;

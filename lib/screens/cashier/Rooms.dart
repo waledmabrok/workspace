@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import 'package:workspace/utils/colors.dart';
 import 'package:workspace/widget/buttom.dart';
+import 'package:workspace/widget/form.dart';
 import '../../core/Db_helper.dart';
 import '../../core/FinanceDb.dart';
 import '../../core/data_service.dart';
@@ -93,15 +94,18 @@ class _CashierRoomsPageState extends State<CashierRoomsPage> {
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(
+                CustomFormField(hint: "اسم العميل", controller: nameCtrl),
+                /*TextField(
                   controller: nameCtrl,
                   decoration: const InputDecoration(labelText: "اسم العميل"),
-                ),
-                TextField(
+                ),*/
+                const SizedBox(height: 12),
+                CustomFormField(hint: "عدد الأشخاص", controller: personsCtrl),
+                /*  TextField(
                   controller: personsCtrl,
                   decoration: const InputDecoration(labelText: "عدد الأشخاص"),
                   keyboardType: TextInputType.number,
-                ),
+                ),*/
               ],
             ),
             actions: [
@@ -579,7 +583,7 @@ class _CashierRoomsPageState extends State<CashierRoomsPage> {
   Widget _buildAddProductsAndPay(Session s) {
     Product? selectedProduct;
     final qtyCtrl = TextEditingController(text: '1');
-
+    late StateSetter sheetSetState;
     Future<void> _showReceiptDialog(Session s, double productsTotal) async {
       if (!context.mounted) return;
       final paidCtrl = TextEditingController();
@@ -590,6 +594,13 @@ class _CashierRoomsPageState extends State<CashierRoomsPage> {
         builder: (context) {
           return StatefulBuilder(
             builder: (context, setDialogState) {
+              sheetSetState = setDialogState;
+              Future.microtask(() async {
+                final updatedCart = await CartDb.getCartBySession(s.id);
+                if (!context.mounted) return;
+                sheetSetState(() => s.cart = List.from(updatedCart));
+              });
+
               final finalTotal = productsTotal - discountValue;
               return AlertDialog(
                 title: Text('إيصال الدفع - ${s.name}'),
@@ -597,11 +608,143 @@ class _CashierRoomsPageState extends State<CashierRoomsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ...s.cart.map(
-                        (item) => Text(
-                          '${item.product.name} x${item.qty} = ${item.total} ج',
-                        ),
-                      ),
+                      ...s.cart.map((item) {
+                        final qtyController = TextEditingController(
+                          text: item.qty.toString(),
+                        );
+
+                        return StatefulBuilder(
+                          builder: (context, setItemState) {
+                            bool isDeleting = false; // لكل item
+
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 4.0,
+                                horizontal: 0,
+                              ),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      item.product.name,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: 60,
+                                    child: TextField(
+                                      controller: qtyController,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                      keyboardType: TextInputType.number,
+                                      onChanged: (val) async {
+                                        final newQty =
+                                            int.tryParse(val) ?? item.qty;
+                                        if (newQty <= 0 ||
+                                            newQty >
+                                                item.product.stock + item.qty)
+                                          return;
+
+                                        item.product.stock +=
+                                            (item.qty - newQty);
+                                        item.qty = newQty;
+
+                                        await CartDb.updateCartItemQty(
+                                          item.id,
+                                          newQty,
+                                        );
+
+                                        if (!context.mounted) return;
+                                        sheetSetState(
+                                          () =>
+                                              selectedProduct = val as Product?,
+                                        ); // ✅ ده بتاع الـ bottom sheet كله
+                                      },
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon:
+                                        isDeleting
+                                            ? const Icon(
+                                              Icons.hourglass_top,
+                                              color: Colors.grey,
+                                            ) // ⏳ شكلي
+                                            : const Icon(
+                                              Icons.delete,
+                                              color: Colors.redAccent,
+                                            ),
+                                    onPressed:
+                                        isDeleting
+                                            ? null // ⛔ ممنوع الضغط لو العملية شغالة
+                                            : () async {
+                                              setItemState(
+                                                () => isDeleting = true,
+                                              ); // تحديث حالة الزرار بس
+
+                                              try {
+                                                if (item.qty > 1) {
+                                                  item.qty -= 1;
+                                                  item.product.stock += 1;
+
+                                                  await CartDb.updateCartItemQty(
+                                                    item.id,
+                                                    item.qty,
+                                                  );
+                                                } else {
+                                                  await CartDb.deleteCartItem(
+                                                    item.id,
+                                                  );
+
+                                                  item.product.stock += 1;
+                                                  s.cart.remove(item);
+                                                }
+
+                                                await ProductDb.insertProduct(
+                                                  item.product,
+                                                );
+
+                                                final idx = AdminDataService
+                                                    .instance
+                                                    .products
+                                                    .indexWhere(
+                                                      (p) =>
+                                                          p.id ==
+                                                          item.product.id,
+                                                    );
+                                                if (idx != -1) {
+                                                  AdminDataService
+                                                          .instance
+                                                          .products[idx]
+                                                          .stock =
+                                                      item.product.stock;
+                                                }
+                                                final updatedCart =
+                                                    await CartDb.getCartBySession(
+                                                      s.id,
+                                                    );
+                                                if (!context.mounted) return;
+                                                sheetSetState(
+                                                  () =>
+                                                      s.cart = List.from(
+                                                        updatedCart,
+                                                      ),
+                                                ); // ✅ إعادة رسم كل الـ bottom sheet
+                                              } finally {
+                                                setItemState(
+                                                  () => isDeleting = false,
+                                                ); // تفعيل الزرار تاني
+                                              }
+                                            },
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        );
+                      }).toList(),
                       const SizedBox(height: 12),
                       Text(
                         'المطلوب: ${finalTotal.toStringAsFixed(2)} ج',
@@ -654,6 +797,12 @@ class _CashierRoomsPageState extends State<CashierRoomsPage> {
 
     return StatefulBuilder(
       builder: (context, setSheetState) {
+        CartDb.getCartBySession(s.id).then((updatedCart) {
+          setSheetState(() {
+            s.cart = updatedCart;
+          });
+        });
+
         return Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -759,6 +908,7 @@ class _CashierRoomsPageState extends State<CashierRoomsPage> {
               ),
               const SizedBox(height: 12),
               ...s.cart.map((item) {
+                bool isDeleting = false;
                 final qtyController = TextEditingController(
                   text: item.qty.toString(),
                 );
@@ -797,11 +947,38 @@ class _CashierRoomsPageState extends State<CashierRoomsPage> {
                       IconButton(
                         icon: const Icon(Icons.delete, color: Colors.redAccent),
                         onPressed: () async {
-                          await CartDb.deleteCartItem(item.id);
-                          item.product.stock += item.qty;
-                          s.cart.remove(item);
-                          if (!context.mounted) return;
-                          setSheetState(() {});
+                          if (isDeleting)
+                            return; // ⛔ تجاهل الضغط لو في عملية شغالة
+                          isDeleting = true;
+
+                          try {
+                            if (item.qty > 1) {
+                              // 🟢 قلل 1 من الكمية
+                              item.qty -= 1;
+                              item.product.stock += 1;
+
+                              // تحديث DB
+                              await CartDb.updateCartItemQty(item.id, item.qty);
+                            } else {
+                              // 🟠 لو آخر واحدة → امسح العنصر
+                              await CartDb.deleteCartItem(item.id);
+
+                              item.product.stock += 1;
+                              s.cart.remove(item);
+                            }
+                            await ProductDb.insertProduct(item.product);
+                            // تحديث AdminDataService
+                            final idx = AdminDataService.instance.products
+                                .indexWhere((p) => p.id == item.product.id);
+                            if (idx != -1) {
+                              AdminDataService.instance.products[idx].stock =
+                                  item.product.stock;
+                            }
+
+                            setSheetState(() {});
+                          } finally {
+                            isDeleting = false; // ✅ فك القفل بعد انتهاء العملية
+                          }
                         },
                       ),
                     ],

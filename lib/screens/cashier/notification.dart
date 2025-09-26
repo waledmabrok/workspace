@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:workspace/utils/colors.dart';
 import '../../core/NotificationsDb.dart';
 import '../../core/models.dart';
 
@@ -40,25 +41,29 @@ class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
     }
 
     // تحويل الجلسات لقائمة فريدة حسب id لتجنب duplicates
-    final sessionMap = {
-      for (var s in widget.sessionsSub) s.id: s,
-    };
+    final sessionMap = {for (var s in widget.sessionsSub) s.id: s};
 
     setState(() {
-      expiring = e.map((n) => sessionMap[n.sessionId])
-          .where((s) => s != null)
-          .cast<Session>()
-          .toList();
+      expiring =
+          e
+              .map((n) => sessionMap[n.sessionId])
+              .where((s) => s != null)
+              .cast<Session>()
+              .toList();
 
-      expired = x.map((n) => sessionMap[n.sessionId])
-          .where((s) => s != null)
-          .cast<Session>()
-          .toList();
+      expired =
+          x
+              .map((n) => sessionMap[n.sessionId])
+              .where((s) => s != null)
+              .cast<Session>()
+              .toList();
 
-      dailyLimitReached = daily.map((n) => sessionMap[n.sessionId])
-          .where((s) => s != null)
-          .cast<Session>()
-          .toList();
+      dailyLimitReached =
+          daily
+              .map((n) => sessionMap[n.sessionId])
+              .where((s) => s != null)
+              .cast<Session>()
+              .toList();
     });
   }
 
@@ -159,8 +164,14 @@ class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(forceMaterialTransparency: true,
-        title: const Center(child:Text("الإشعارات")),
+      appBar: AppBar(
+        forceMaterialTransparency: true,
+        title: const Center(
+          child: Text(
+            "الإشعارات",
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.done_all),
@@ -198,13 +209,14 @@ class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
                       IconButton(
                         icon: const Icon(Icons.visibility),
                         tooltip: "اعتبار كمقروء",
-                        onPressed: () => _markOneAsRead(s, 'dailyLimit'),
+                        //  onPressed: () => _markOneAsRead(s, 'dailyLimit'),
+                        onPressed: () => _deleteOne(s, 'dailyLimit'),
                       ),
-                      IconButton(
+                      /*   IconButton(
                         icon: const Icon(Icons.delete, color: Colors.red),
                         tooltip: "حذف",
                         onPressed: () => _deleteOne(s, 'dailyLimit'),
-                      ),
+                      ),*/
                     ],
                   ),
                 ),
@@ -233,13 +245,14 @@ class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
                       IconButton(
                         icon: const Icon(Icons.visibility),
                         tooltip: "اعتبار كمقروء",
-                        onPressed: () => _markOneAsRead(s, 'expiring'),
+                        // onPressed: () => _markOneAsRead(s, 'expiring'),
+                        onPressed: () => _deleteOne(s, 'expiring'),
                       ),
-                      IconButton(
+                      /*   IconButton(
                         icon: const Icon(Icons.delete, color: Colors.red),
                         tooltip: "حذف",
                         onPressed: () => _deleteOne(s, 'expiring'),
-                      ),
+                      ),*/
                     ],
                   ),
                 ),
@@ -266,13 +279,14 @@ class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
                       IconButton(
                         icon: const Icon(Icons.visibility),
                         tooltip: "اعتبار كمقروء",
-                        onPressed: () => _markOneAsRead(s, 'expired'),
+                        // onPressed: () => _markOneAsRead(s, 'expired'),
+                        onPressed: () => _deleteOne(s, 'expired'),
                       ),
-                      IconButton(
+                      /*  IconButton(
                         icon: const Icon(Icons.delete, color: Colors.red),
                         tooltip: "حذف",
                         onPressed: () => _deleteOne(s, 'expired'),
-                      ),
+                      ),*/
                     ],
                   ),
                 ),
@@ -287,8 +301,9 @@ class _ExpiringSessionsPageState extends State<ExpiringSessionsPage> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
+        backgroundColor: AppColorsDark.mainColor,
         onPressed: _loadNotifications,
-        child: const Icon(Icons.refresh),
+        child: Icon(Icons.refresh, color: AppColorsLight.bgCardColor),
       ),
     );
   }

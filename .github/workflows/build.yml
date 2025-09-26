@@ -1,0 +1,69 @@
+name: Flutter CI
+
+on:
+  push:
+    branches: [ "main" ]   # أو غيرها حسب الفرع اللي بتشتغل عليه
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v3
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0' # غيرها حسب نسخة Flutter اللي عندك
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # ✅ Build APK
+      - name: Build APK
+        run: flutter build apk --release
+
+      # ✅ Build AppBundle (AAB)
+      - name: Build AppBundle
+        run: flutter build appbundle --release
+
+      # ✅ رفع الـ APK و AAB كـ artifacts عشان تقدر تنزلهم
+      - name: Upload Android Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: android-builds
+          path: build/app/outputs/flutter-apk/*.apk
+
+      - name: Upload AppBundle
+        uses: actions/upload-artifact@v3
+        with:
+          name: appbundle
+          path: build/app/outputs/bundle/release/*.aab
+
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v3
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # ✅ Build Windows EXE
+      - name: Build Windows
+        run: flutter build windows --release
+
+      - name: Upload Windows Build
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-build
+          path: build/windows/runner/Release/

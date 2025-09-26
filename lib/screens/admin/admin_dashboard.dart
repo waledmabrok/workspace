@@ -51,7 +51,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           name: 'باقة يوم',
           durationType: 'day',
           durationValue: 1,
-          price: 10.0,
+          price: 90.0,
         ),
       );
     }
@@ -203,7 +203,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('لوحة الأدمن'),
+        forceMaterialTransparency: true,
+        title: Center(
+          child: const Text(
+            'لوحة الأدمن',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
+        ),
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
@@ -303,7 +309,7 @@ class AdminCard extends StatelessWidget {
           children: [
             Icon(
               data.icon,
-              size: 55,
+              size: 50,
               color: AppColorsDark.mainColor.withOpacity(
                 0.4,
               ), // نفس اللون للأيقونة
@@ -314,7 +320,7 @@ class AdminCard extends StatelessWidget {
               textAlign: TextAlign.center,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 35,
+                fontSize: 25,
                 fontWeight: FontWeight.bold,
               ),
             ),

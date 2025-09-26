@@ -151,7 +151,7 @@ class DbHelper {
     final summary = await getShiftSummary(shift['id'] as int);
 
     return {
-      "id":shift['id'] as String,
+      "id": shift['id'] as String,
       "cashierName": shift['cashierName'],
       "opened_at": shift['opened_at'],
       "openingBalance": shift['openingBalance'],
@@ -452,7 +452,7 @@ dailyCapRoom REAL
   )
 ''');
 
-// الشيفتات
+    // الشيفتات
     await db.execute('''
       CREATE TABLE shift_transactions (
   id TEXT PRIMARY KEY,
@@ -492,6 +492,7 @@ dailyCapRoom REAL
       'dailyCap': 150,
     });
   }
+
   Future<void> _ensureExpensesColumns(Database db) async {
     final cols = await db.rawQuery('PRAGMA table_info(expenses)');
     final colNames = cols.map((c) => c['name'] as String).toList();
@@ -731,7 +732,10 @@ dailyCapRoom REAL
 
   // ---------------- إدارة الشيفت ----------------
 
-  Future<int> openShift(String cashierName, {double openingBalance = 0.0}) async {
+  Future<int> openShift(
+    String cashierName, {
+    double openingBalance = 0.0,
+  }) async {
     final db = await instance.database;
     return await db.insert('shifts', {
       'opened_at': DateTime.now().toIso8601String(),
@@ -743,16 +747,19 @@ dailyCapRoom REAL
     });
   }
 
-
-  Future<void> closeShift(int shiftId, double closingBalance, String cashierName) async {
+  Future<void> closeShift(
+    int shiftId,
+    double closingBalance,
+    String cashierName,
+  ) async {
     final db = await instance.database;
 
     await db.update(
       'shifts',
       {
         'closed_at': DateTime.now().toIso8601String(),
-        'cashier_name': cashierName,
-        'drawer_balance': closingBalance,
+        'cashierName': cashierName,
+        'closingBalance': closingBalance,
       },
       where: 'id = ?',
       whereArgs: [shiftId],
@@ -774,14 +781,10 @@ dailyCapRoom REAL
     }
   }
 
-
-
-
   Future<List<Map<String, dynamic>>> getAllShifts() async {
     final db = await instance.database;
     return await db.query('shifts', orderBy: 'id DESC');
   }
-
 
   /*Future<void> closeShift(
     String shiftId,
@@ -851,7 +854,6 @@ dailyCapRoom REAL
   ''');
   }
 
-
   Future<List<Map<String, dynamic>>> getTransactions(String shiftId) async {
     final db = await database;
     return db.query(
@@ -866,18 +868,26 @@ dailyCapRoom REAL
     final db = await instance.database;
 
     // المبيعات
-    final sales = Sqflite.firstIntValue(await db.rawQuery(
-      "SELECT SUM(COALESCE(amount,0) - COALESCE(discount,0)) "
-          "FROM sales WHERE shiftId = ?",
-      [shiftId],
-    )) ?? 0;
+    final sales =
+        Sqflite.firstIntValue(
+          await db.rawQuery(
+            "SELECT SUM(COALESCE(amount,0) - COALESCE(discount,0)) "
+            "FROM sales WHERE shiftId = ?",
+            [shiftId],
+          ),
+        ) ??
+        0;
 
     // المصروفات
     // لو هتربط بالشيفت، لازم تضيف shiftId في جدول expenses أولًا
-    final expenses = Sqflite.firstIntValue(await db.rawQuery(
-      "SELECT SUM(COALESCE(amount,0)) FROM expenses WHERE shiftId = ?",
-      [shiftId],
-    )) ?? 0;
+    final expenses =
+        Sqflite.firstIntValue(
+          await db.rawQuery(
+            "SELECT SUM(COALESCE(amount,0)) FROM expenses WHERE shiftId = ?",
+            [shiftId],
+          ),
+        ) ??
+        0;
 
     // الرصيد الافتتاحي
     final result = await db.query(
@@ -888,9 +898,10 @@ dailyCapRoom REAL
       limit: 1,
     );
 
-    final openingBalance = result.isNotEmpty
-        ? (result.first["openingBalance"] as num?)?.toDouble() ?? 0.0
-        : 0.0;
+    final openingBalance =
+        result.isNotEmpty
+            ? (result.first["openingBalance"] as num?)?.toDouble() ?? 0.0
+            : 0.0;
 
     return {
       "sales": sales.toDouble(),
@@ -1152,8 +1163,7 @@ dailyCapRoom REAL
 
       return report;
     });
-  }// في DbHelper
-
+  } // في DbHelper
 
   Future<Map<String, dynamic>?> getLastClosedShift() async {
     final db = await database;
@@ -1166,6 +1176,4 @@ dailyCapRoom REAL
     if (result.isEmpty) return null;
     return result.first;
   }
-
-
 }

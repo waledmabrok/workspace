@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:workspace/widget/form.dart';
 import 'dart:math';
 
 import '../core/data_service.dart';
@@ -19,8 +20,9 @@ class _HomeRouterState extends State<HomeRouter> {
   @override
   void initState() {
     super.initState();
+  }
 
-  }Future<void> _openShiftOnStart() async {
+  Future<void> _openShiftOnStart() async {
     // جلب الشيفت المفتوح حالياً
     final currentShift = await DbHelper.instance.getCurrentShift();
     if (currentShift != null) {
@@ -33,7 +35,8 @@ class _HomeRouterState extends State<HomeRouter> {
     double openingBalance = 0.0;
 
     if (lastClosedShift != null) {
-      openingBalance = (lastClosedShift['closingBalance'] as num?)?.toDouble() ?? 0.0;
+      openingBalance =
+          (lastClosedShift['closingBalance'] as num?)?.toDouble() ?? 0.0;
     }
 
     // فتح شيفت جديد
@@ -53,8 +56,7 @@ class _HomeRouterState extends State<HomeRouter> {
     debugPrint("✅ تم فتح شيفت جديد تلقائي برقم $id");
   }
 
-
-/*
+  /*
   Future<void> _openShiftOnStart() async {
     final lastClosedShift = await DbHelper.instance.getLastClosedShift();
     double openingBalance = 0.0;
@@ -79,8 +81,6 @@ class _HomeRouterState extends State<HomeRouter> {
     debugPrint("✅ تم فتح شيفت جديد تلقائي برقم $id");
   }
 */
-
-
 
   /*  Future<void> _loadPasswords() async {
     await AdminDataService.instance.loadPasswords();
@@ -118,8 +118,8 @@ class _HomeRouterState extends State<HomeRouter> {
                       Icons.point_of_sale,
                       const CashierScreen(),
 
-                      correctPassword: AdminDataService.instance.cashierPassword,
-
+                      correctPassword:
+                          AdminDataService.instance.cashierPassword,
                     ),
                   ],
                 ),
@@ -146,7 +146,8 @@ class _HomeRouterState extends State<HomeRouter> {
       ),
       onPressed: () async {
         final ok = await _askForPassword(context, correctPassword);
-        if (ok) { _openShiftOnStart();
+        if (ok) {
+          _openShiftOnStart();
           Navigator.of(context).push(MaterialPageRoute(builder: (_) => route));
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -179,12 +180,18 @@ class _HomeRouterState extends State<HomeRouter> {
           builder:
               (ctx) => AlertDialog(
                 title: const Text("أدخل كلمة المرور"),
-                content: TextField(
+
+                content: CustomFormField(
+                  hint: "كلمة المرور",
+                  controller: controller,
+                  isPassword: true,
+                ),
+                /*TextField(
                   controller: controller,
                   obscureText: true,
                   decoration: const InputDecoration(hintText: "كلمة المرور"),
                   onSubmitted: (_) => submit(ctx), // هنا Enter هيشتغل
-                ),
+                ),*/
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.pop(ctx, false),

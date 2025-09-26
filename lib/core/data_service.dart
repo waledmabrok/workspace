@@ -142,6 +142,44 @@ class AdminDataService {
 
   // ===== رصيد درج الكاشير (مخزن بالذاكرة للعرض السريع) =====
   double drawerBalance = 0.0;
+  // رصيد درج الكاشير
+
+  // ------------------- تعديل رصيد الدرج يدويًا
+  Future<void> setDrawerBalance(double newBalance) async {
+    final delta = newBalance - drawerBalance; // الفرق بين القديم والجديد
+    drawerBalance = newBalance;
+
+    try {
+      await FinanceDb.setDrawerBalance(newBalance);
+
+      if (delta > 0) {
+        // فرق موجب = زيادة في الأرباح (سجلها كمبيعة بدون عميل)
+        await addSale(
+          Sale(amount: delta, date: DateTime.now(), id: '', description: ''),
+          updateDrawer: false, // مش نضيفها تاني للدرج
+        );
+      } else if (delta < 0) {
+        // فرق سلبي = مصروف إضافي
+        await addExpense(
+          Expense(amount: -delta, date: DateTime.now(), id: '', title: ''),
+          deductFromDrawer: false, // مش نخصمها تاني من الدرج
+        );
+      }
+    } catch (e) {
+      await refreshDrawerBalance();
+    }
+  }
+
+  // تعديل الرصيد بـ delta
+  Future<void> adjustDrawerBalance(double delta) async {
+    try {
+      await FinanceDb.updateDrawerBalanceBy(delta);
+      drawerBalance += delta;
+    } catch (err) {
+      await refreshDrawerBalance();
+    }
+  }
+
   // إجمالي اليوم
   double getTodaySales() {
     final now = DateTime.now();
@@ -164,6 +202,12 @@ class AdminDataService {
               s.date.day == date.day,
         )
         .fold(0.0, (sum, s) => sum + s.amount);
+  }
+
+  double getDrawerBalanceByDate(DateTime date) {
+    final salesForDay = getSalesByDate(date);
+    final expensesForDay = getExpensesByDate(date);
+    return salesForDay - expensesForDay;
   }
 
   double getAllSales() {
@@ -371,9 +415,19 @@ class AdminDataService {
   void deleteProduct(String id) => products.removeWhere((p) => p.id == id);
 
   // ------------------- المبيعات والمصاريف -------------------
-  Future<void> addExpense(Expense e) async {
+  // ------------------- إضافة مصروف مع خصم من الدرج
+  Future<void> addExpense(Expense e, {bool deductFromDrawer = true}) async {
     await FinanceDb.insertExpense(e);
     expenses.add(e);
+
+    if (deductFromDrawer) {
+      try {
+        await FinanceDb.updateDrawerBalanceBy(-e.amount); // خصم من الدرج
+        drawerBalance -= e.amount;
+      } catch (err) {
+        await refreshDrawerBalance(); // fallback لو فيه خطأ
+      }
+    }
   }
 
   /// أضف مبيعة إلى DB + ذاكرة البرنامج.

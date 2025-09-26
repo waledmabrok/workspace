@@ -148,25 +148,60 @@
 
 // lib/core/FinanceDb.dart
 
-import 'Db_helper.dart'; // أو 'db_helper.dart' حسب اسم الملف عندك - خليه متطابق مع اسم الملف
+import 'Db_helper.dart';
 import 'models.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'dart:convert';
 
 class FinanceDb {
-  // ---------- مصاريف ----------
-  static Future<void> insertExpense(Expense e) async {
+  // ------------------- Expenses -------------------
+  static Future<void> insertExpense(Expense e, {String? shiftId}) async {
     final db = await DbHelper.instance.database;
+
+    // تخزين المصروف في جدول expenses
     await db.insert('expenses', {
       'id': e.id,
       'title': e.title,
       'amount': e.amount,
       'date': e.date.millisecondsSinceEpoch,
+      'shiftId': shiftId,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+    // إضافة حركة في shift_transactions إذا تم تمرير shiftId
+    if (shiftId != null) {
+      await DbHelper.instance.addTransaction(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        shiftId: shiftId,
+        type: 'expense',
+        amount: e.amount,
+        description: e.title,
+      );
+    }
+
+    // ✅ خصم المبلغ من الدرج
+    await updateDrawerBalanceBy(-e.amount);
   }
 
-  // ---------- مبيعات ----------
-  /// Insert sale with optional paymentMethod, customerId, customerName, discount
+  static Future<List<Expense>> getExpenses({String? shiftId}) async {
+    final db = await DbHelper.instance.database;
+    final maps = await db.query(
+      'expenses',
+      where: shiftId != null ? 'shiftId = ?' : null,
+      whereArgs: shiftId != null ? [shiftId] : null,
+    );
+    return maps
+        .map(
+          (m) => Expense(
+            id: m['id'] as String,
+            title: m['title'] as String,
+            amount: (m['amount'] as num).toDouble(),
+            date: DateTime.fromMillisecondsSinceEpoch(m['date'] as int),
+          ),
+        )
+        .toList();
+  }
+
+  // ------------------- Sales -------------------
   static Future<void> insertSale(
     Sale s, {
     String? paymentMethod,
@@ -188,24 +223,13 @@ class FinanceDb {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  static Future<List<Expense>> getExpenses() async {
+  static Future<List<Sale>> getSales({String? shiftId}) async {
     final db = await DbHelper.instance.database;
-    final maps = await db.query('expenses');
-    return maps
-        .map(
-          (m) => Expense(
-            id: m['id'] as String,
-            title: m['title'] as String,
-            amount: (m['amount'] as num).toDouble(),
-            date: DateTime.fromMillisecondsSinceEpoch(m['date'] as int),
-          ),
-        )
-        .toList();
-  }
-
-  static Future<List<Sale>> getSales() async {
-    final db = await DbHelper.instance.database;
-    final maps = await db.query('sales');
+    final maps = await db.query(
+      'sales',
+      where: shiftId != null ? 'shiftId = ?' : null,
+      whereArgs: shiftId != null ? [shiftId] : null,
+    );
     return maps
         .map(
           (m) => Sale(
@@ -218,7 +242,7 @@ class FinanceDb {
         .toList();
   }
 
-  // ---------- درج الكاشير ----------
+  // ------------------- Drawer -------------------
   static Future<double> getDrawerBalance() async {
     final db = await DbHelper.instance.database;
     final rows = await db.query(
@@ -231,20 +255,12 @@ class FinanceDb {
       await db.insert('drawer', {'id': 1, 'balance': 0.0});
       return 0.0;
     }
-    final bal = rows.first['balance'];
-    return (bal as num).toDouble();
+    return (rows.first['balance'] as num).toDouble();
   }
 
   static Future<void> updateDrawerBalanceBy(double delta) async {
-    final db = await DbHelper.instance.database;
     final current = await getDrawerBalance();
-    final updated = current + delta;
-    await db.update(
-      'drawer',
-      {'balance': updated},
-      where: 'id = ?',
-      whereArgs: [1],
-    );
+    await setDrawerBalance(current + delta);
   }
 
   static Future<void> setDrawerBalance(double newBalance) async {
@@ -263,8 +279,7 @@ class FinanceDb {
     }
   }
 
-  // ---------- أرصدة العملاء ----------
-  // NOTE: use customerId (not name) because your table column is customerId
+  // ------------------- Customer Balances -------------------
   static Future<double> getCustomerBalance(String customerId) async {
     final db = await DbHelper.instance.database;
     final rows = await db.query(
@@ -274,8 +289,7 @@ class FinanceDb {
       limit: 1,
     );
     if (rows.isEmpty) return 0.0;
-    final bal = rows.first['balance'];
-    return (bal as num).toDouble();
+    return (rows.first['balance'] as num).toDouble();
   }
 
   static Future<void> setCustomerBalance(
@@ -294,125 +308,62 @@ class FinanceDb {
     double delta,
   ) async {
     final current = await getCustomerBalance(customerId);
-    final updated = current + delta;
-    await setCustomerBalance(customerId, updated);
+    await setCustomerBalance(customerId, current + delta);
   }
 
-  static Future<List<Map<String, dynamic>>> getShiftsByCashierId(
-    String cashierId,
-  ) async {
-    final db = await DbHelper.instance.database;
-    final rows = await db.query(
-      'shifts',
-      where: 'cashierId = ?',
-      whereArgs: [cashierId],
-      orderBy: 'openedAt DESC',
-    );
-    return rows;
-  }
-
-  // ---------- قفل الشيفت ----------
-  static Future<void> closeShift({
-    required String id,
-    required List<String> signers,
-    required double drawerBalanceAtClose,
-    required double totalSales,
-    DateTime? closedAt,
+  // ------------------- Shifts -------------------
+  static Future<int> openShift(
+    String cashierName, {
+    double openingBalance = 0.0,
   }) async {
-    final db = await DbHelper.instance.database;
-    final now = (closedAt ?? DateTime.now()).toIso8601String();
-    final signersJson = jsonEncode(signers);
-
-    await db.update(
-      'shifts',
-      {
-        'closedAt': now,
-        'signers': signersJson,
-        'closingBalance': drawerBalanceAtClose,
-        'totalSales': totalSales,
-      },
-      where: 'id = ?',
-      whereArgs: [id],
+    return await DbHelper.instance.openShift(
+      cashierName,
+      openingBalance: openingBalance,
     );
   }
 
-  static Future<List<Map<String, dynamic>>> getShiftsByDate(
-    DateTime date,
+  static Future<Map<String, dynamic>> closeShiftDetailed(
+    String shiftId, {
+    double? countedClosingBalance,
+    String? cashierName,
+  }) async {
+    return await DbHelper.instance.closeShiftDetailed(
+      shiftId,
+      countedClosingBalance: countedClosingBalance,
+      cashierName: cashierName,
+    );
+  }
+
+  static Future<Map<String, dynamic>?> getCurrentShift() async {
+    return await DbHelper.instance.getCurrentShift();
+  }
+
+  static Future<Map<String, dynamic>?> getCurrentShiftForCashier(
+    String cashierName,
   ) async {
-    final db = await openDatabase('finance.db');
-
-    final start = DateTime(date.year, date.month, date.day);
-    final end = start.add(const Duration(days: 1));
-
-    final shifts = await db.query(
-      'shifts',
-      where: 'openedAt >= ? AND openedAt < ?',
-      whereArgs: [start.toIso8601String(), end.toIso8601String()],
-    );
-
-    List<Map<String, dynamic>> result = [];
-
-    for (var shift in shifts) {
-      // هنا نحسب المبيعات والمصروفات من جدول المبيعات والمصروفات
-      final shiftId = shift['id'];
-
-      final totalSalesResult = await db.rawQuery(
-        'SELECT SUM(amount) as total FROM sales WHERE shiftId = ?',
-        [shiftId],
-      );
-      final totalExpensesResult = await db.rawQuery(
-        'SELECT SUM(amount) as total FROM expenses WHERE shiftId = ?',
-        [shiftId],
-      );
-
-      final totalSales = totalSalesResult.first['total'] ?? 0.0;
-      final totalExpenses = totalExpensesResult.first['total'] ?? 0.0;
-
-      result.add({
-        'cashierName': shift['cashierName'],
-        'openedAt': shift['openedAt'],
-        'closedAt': shift['closedAt'],
-        'openingBalance': shift['openingBalance'],
-        'closingBalance': shift['closingBalance'],
-        'totalSales': totalSales,
-        'totalExpenses': totalExpenses,
-      });
-    }
-
-    return result;
+    return await DbHelper.instance.getCurrentShiftForCashier(cashierName);
   }
 
-  static Future<List<Map<String, dynamic>>> getShifts() async {
-    final db = await DbHelper.instance.database;
-    final rows = await db.query('shifts');
+  static Future<List<Map<String, dynamic>>> getAllShifts() async {
+    return await DbHelper.instance.getAllShifts();
+  }
 
-    List<Map<String, dynamic>> updatedRows = [];
+  static Future<Map<String, dynamic>> getShiftSummary(int shiftId) async {
+    return await DbHelper.instance.getShiftSummary(shiftId);
+  }
 
-    for (var row in rows) {
-      final shiftId = row['id'] as String;
+  // ------------------- Utilities -------------------
+  static String genId() => DateTime.now().millisecondsSinceEpoch.toString();
 
-      final salesResult = await db.rawQuery(
-        "SELECT SUM(amount) as total FROM sales WHERE shiftId = ?",
-        [shiftId],
-      );
+  static Future<void> addShiftExpense(double amount, String title) async {
+    final currentShift = await getCurrentShift();
+    if (currentShift == null) throw Exception('لا يوجد شيفت مفتوح');
 
-      final expensesResult = await db.rawQuery(
-        "SELECT SUM(amount) as total FROM expenses WHERE shiftId = ?",
-        [shiftId],
-      );
+    final shiftId = currentShift['id'].toString();
 
-      final totalSales =
-          (salesResult.first['total'] as num?)?.toDouble() ?? 0.0;
-      final totalExpenses =
-          (expensesResult.first['total'] as num?)?.toDouble() ?? 0.0;
-
-      updatedRows.add({
-        ...row,
-        'totalSales': totalSales,
-        'totalExpenses': totalExpenses,
-      });
-    }
-
-    return updatedRows;
+    await insertExpense(
+      Expense(id: genId(), title: title, amount: amount, date: DateTime.now()),
+      shiftId: shiftId,
+    );
   }
 }

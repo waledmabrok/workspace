@@ -964,10 +964,16 @@ class _CashierScreenState extends State<CashierScreen>
 
   Widget _buildAddProductsAndPay(Session s, {bool onlyAdd = false}) {
     Product? selectedProduct;
+    bool isDeleting = false;
     TextEditingController qtyCtrl = TextEditingController(text: '0');
 
     return StatefulBuilder(
       builder: (context, setSheetState) {
+        CartDb.getCartBySession(s.id).then((updatedCart) {
+          setSheetState(() {
+            s.cart = updatedCart;
+          });
+        });
         return Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -1112,6 +1118,7 @@ class _CashierScreenState extends State<CashierScreen>
 
                             // تعديل المخزون
                             item.product.stock += (item.qty - newQty);
+
                             final idx = AdminDataService.instance.products
                                 .indexWhere((p) => p.id == item.product.id);
                             if (idx != -1)
@@ -1136,23 +1143,75 @@ class _CashierScreenState extends State<CashierScreen>
                           ),
                         ),
                       ),
+
                       IconButton(
                         icon: const Icon(Icons.delete, color: Colors.redAccent),
                         onPressed: () async {
-                          await CartDb.deleteCartItem(item.id);
+                          if (isDeleting)
+                            return; // ⛔ تجاهل الضغط لو في عملية شغالة
+                          isDeleting = true;
 
-                          // إعادة الكمية للمخزون
-                          item.product.stock += item.qty;
+                          try {
+                            if (item.qty > 1) {
+                              // 🟢 قلل 1 من الكمية
+                              item.qty -= 1;
+                              item.product.stock += 1;
+
+                              // تحديث DB
+                              await CartDb.updateCartItemQty(item.id, item.qty);
+                            } else {
+                              // 🟠 لو آخر واحدة → امسح العنصر
+                              await CartDb.deleteCartItem(item.id);
+
+                              item.product.stock += 1;
+                              s.cart.remove(item);
+                            }
+                            await ProductDb.insertProduct(item.product);
+                            // تحديث AdminDataService
+                            final idx = AdminDataService.instance.products
+                                .indexWhere((p) => p.id == item.product.id);
+                            if (idx != -1) {
+                              AdminDataService.instance.products[idx].stock =
+                                  item.product.stock;
+                            }
+
+                            setSheetState(() {});
+                          } finally {
+                            isDeleting = false; // ✅ فك القفل بعد انتهاء العملية
+                          }
+                        },
+                      ),
+
+                      /*  IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.redAccent),
+                        onPressed: () async {
+                          if (item.qty > 1) {
+                            // 🟢 قلل 1 من الكمية
+                            item.qty -= 1;
+                            item.product.stock += 1;
+
+                            // تحديث DB
+                            await CartDb.updateCartItemQty(item.id, item.qty);
+                          } else {
+                            // 🟠 لو آخر واحدة → امسح العنصر
+                            await CartDb.deleteCartItem(item.id);
+
+                            item.product.stock += 1;
+                            s.cart.remove(item);
+                          }
+
+                          // تحديث AdminDataService
                           final idx = AdminDataService.instance.products
                               .indexWhere((p) => p.id == item.product.id);
-                          if (idx != -1)
+                          if (idx != -1) {
                             AdminDataService.instance.products[idx].stock =
                                 item.product.stock;
+                          }
 
-                          s.cart.remove(item);
                           setSheetState(() {});
                         },
                       ),
+                    */
                     ],
                   ),
                 );
@@ -1173,9 +1232,6 @@ class _CashierScreenState extends State<CashierScreen>
                       onPressed: () async {
                         Navigator.pop(context);
 
-                        for (var item in s.cart) {
-                          await sellProduct(item.product, item.qty);
-                        }
                         _completeAndPayForSession(s);
                       },
                       infinity: false,
@@ -1207,13 +1263,13 @@ class _CashierScreenState extends State<CashierScreen>
     }
 
     // خصم المخزون مؤقتًا
-    product.stock -= qty;
+    /*   product.stock -= qty;
     final index = AdminDataService.instance.products.indexWhere(
       (p) => p.id == product.id,
     );
     if (index != -1)
       AdminDataService.instance.products[index].stock = product.stock;
-
+*/
     // أضف للـ Cart
     final item = CartItem(id: generateId(), product: product, qty: qty);
 
@@ -1358,7 +1414,10 @@ class _CashierScreenState extends State<CashierScreen>
                     setState(() {
                       s.isActive = false;
                       s.isPaused = false;
+                      _sessions.removeWhere((sess) => sess.id == s.id);
+                      _filteredSessions.removeWhere((sess) => sess.id == s.id);
                     });
+                    s.end = DateTime.now();
                     await SessionDb.updateSession(s);
 
                     // حفظ المبيعة كما هي
@@ -1483,7 +1542,10 @@ class _CashierScreenState extends State<CashierScreen>
                     setState(() {
                       s.isActive = false;
                       s.isPaused = false;
+                      _sessions.removeWhere((sess) => sess.id == s.id);
+                      _filteredSessions.removeWhere((sess) => sess.id == s.id);
                     });
+                    s.end = DateTime.now();
                     await SessionDb.updateSession(s);
 
                     // ---- حفظ المبيعة ----
@@ -1588,9 +1650,10 @@ class _CashierScreenState extends State<CashierScreen>
     final shift = rows.first;
 
     // null-safe id
-    final shiftId = shift['id'] is int
-        ? shift['id'] as int
-        : int.tryParse(shift['id'].toString()) ?? 0;
+    final shiftId =
+        shift['id'] is int
+            ? shift['id'] as int
+            : int.tryParse(shift['id'].toString()) ?? 0;
 
     final summary = await DbHelper.instance.getShiftSummary(shiftId);
 
@@ -1614,11 +1677,7 @@ class _CashierScreenState extends State<CashierScreen>
 
   Future<int?> getCurrentShiftId() async {
     final db = await DbHelper.instance.database;
-    final res = await db.query(
-      'shifts',
-      orderBy: 'id DESC',
-      limit: 1,
-    );
+    final res = await db.query('shifts', orderBy: 'id DESC', limit: 1);
 
     if (res.isNotEmpty) {
       final row = res.first;
@@ -1629,7 +1688,6 @@ class _CashierScreenState extends State<CashierScreen>
 
     return null;
   }
-
 
   Future<double> getClosingBalance() async {
     final db = await DbHelper.instance.database;
@@ -1646,9 +1704,9 @@ class _CashierScreenState extends State<CashierScreen>
     final int? shiftId = await getCurrentShiftId();
     if (shiftId == null) {
       debugPrint("⚠️ لا يوجد شيفت مفتوح للتقفيل");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("لا يوجد شيفت مفتوح")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("لا يوجد شيفت مفتوح")));
       return;
     }
 
@@ -1660,7 +1718,9 @@ class _CashierScreenState extends State<CashierScreen>
       cashierName,
     );
 
-    debugPrint("✅ تم تقفيل الشيفت بنجاح باسم $cashierName مع رصيد $closingBalance");
+    debugPrint(
+      "✅ تم تقفيل الشيفت بنجاح باسم $cashierName مع رصيد $closingBalance",
+    );
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text("تم تقفيل الشيفت بواسطة $cashierName")),
@@ -1679,10 +1739,9 @@ class _CashierScreenState extends State<CashierScreen>
   Future<void> _openShift({required String cashierName}) async {
     final openingBalance = await DbHelper.instance.getClosingBalance();
     final int id = await DbHelper.instance.openShift(
-      'DefaultCashier',            // اسم الكاشير
+      'DefaultCashier', // اسم الكاشير
       openingBalance: openingBalance, // الرصيد الافتتاحي
     );
-
 
     setState(() {
       _currentShiftId = id; // ✅ بقى int
@@ -1799,7 +1858,7 @@ class _CashierScreenState extends State<CashierScreen>
                 ),
               ],
             ),
-/*
+            /*
             IconButton(
               icon: Icon(
                 _currentShift != null ? Icons.lock_clock : Icons.lock_person,
@@ -1876,7 +1935,8 @@ class _CashierScreenState extends State<CashierScreen>
                   final int shiftId = _currentShift!['id'] as int;
 
                   // جلب الرصيد النهائي
-                  final double closingBalance = await DbHelper.instance.getClosingBalance();
+                  final double closingBalance =
+                      await DbHelper.instance.getClosingBalance();
 
                   // إغلاق الشيفت
                   final report = await DbHelper.instance.closeShiftDetailed(
@@ -1893,17 +1953,22 @@ class _CashierScreenState extends State<CashierScreen>
                   });
 
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text("تم تقفيل الشيفت بواسطة ${report['cashierName']}")),
+                    SnackBar(
+                      content: Text(
+                        "تم تقفيل الشيفت بواسطة ${report['cashierName']}",
+                      ),
+                    ),
                   );
                 } else {
                   // إذا مفيش شيفت مفتوح، لا نفعل شيء
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("لا يوجد شيفت مفتوح ليتم تقفيله")),
+                    const SnackBar(
+                      content: Text("لا يوجد شيفت مفتوح ليتم تقفيله"),
+                    ),
                   );
                 }
               },
-            )
-,
+            ),
 
             Stack(
               children: [
@@ -2422,12 +2487,6 @@ class _CashierScreenState extends State<CashierScreen>
                         borderColor: Colors.red,
                         text: 'دفع',
                         onPressed: () async {
-                          for (var item in s.cart) {
-                            await sellProduct(
-                              item.product,
-                              item.qty,
-                            ); // خصم المخزون فعليًا
-                          }
                           _completeAndPayForSession(s);
                         },
                         color: Colors.red,

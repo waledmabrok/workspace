@@ -155,6 +155,8 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
 import 'package:flutter/material.dart';
 import 'package:workspace/utils/colors.dart';
 import 'package:workspace/widget/buttom.dart';
+import 'package:workspace/widget/dropDown.dart';
+import 'package:workspace/widget/form.dart';
 import 'dart:math';
 import '../../core/data_service.dart'; // <-- هذا يضيف AdminDataService
 
@@ -355,12 +357,28 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
+            CustomFormField(hint: 'اسم الباقة', controller: _name),
+            /*  TextField(
               controller: _name,
               decoration: const InputDecoration(labelText: 'اسم الباقة'),
+            ),*/
+            const SizedBox(height: 10),
+            CustomDropdownFormField(
+              hint: "مده الباقه",
+              value: _durationType,
+              items:
+                  ['hour', 'day', 'week', 'month', 'unlimited']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+              onChanged:
+                  (val) => setState(() {
+                    _durationType = val!;
+                    _isUnlimited = (val == "unlimited");
+                  }),
             ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
+            const SizedBox(height: 10),
+
+            /*     DropdownButtonFormField<String>(
               value: _durationType,
               items:
                   ['hour', 'day', 'week', 'month', 'unlimited']
@@ -373,22 +391,37 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
                   }),
               decoration: const InputDecoration(labelText: 'نوع المدة'),
             ),
+       */
             if (!_isUnlimited)
-              TextField(
+              CustomFormField(hint: 'عدد المده', controller: _durationValue),
+            /*  TextField(
                 controller: _durationValue,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: 'عدد الوحدات'),
-              ),
-            const SizedBox(height: 8),
-            TextField(
+              ),*/
+            const SizedBox(height: 10),
+            CustomFormField(hint: 'السعر', controller: _price),
+            /*TextField(
               controller: _price,
               decoration: const InputDecoration(labelText: 'السعر'),
               keyboardType: TextInputType.number,
-            ),
+            ),*/
             const Divider(height: 20, thickness: 1),
+            CustomDropdownFormField(
+              hint: "الاستخدام اليومي",
+              value: _dailyUsageType,
+              items: [
+                DropdownMenuItem(value: "full", child: Text("مفتوح طول اليوم")),
+                DropdownMenuItem(value: "limited", child: Text("ساعات محدودة")),
+              ],
+              onChanged:
+                  (val) => setState(() {
+                    _dailyUsageType = val!;
+                  }),
+            ),
 
             // اختيار نوع الاستخدام اليومي
-            DropdownButtonFormField<String>(
+            /*   DropdownButtonFormField<String>(
               value: _dailyUsageType,
               items: [
                 DropdownMenuItem(value: "full", child: Text("مفتوح طول اليوم")),
@@ -400,15 +433,19 @@ class _SubscriptionDialogState extends State<SubscriptionDialog> {
                   }),
               decoration: const InputDecoration(labelText: 'الاستخدام اليومي'),
             ),
-
-            if (_dailyUsageType == "limited")
-              TextField(
+*/
+            if (_dailyUsageType == "limited") const SizedBox(height: 10),
+            CustomFormField(
+              hint: 'عدد الساعات في اليوم ',
+              controller: _dailyHours,
+            ),
+            /*  TextField(
                 controller: _dailyHours,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
                   labelText: 'عدد الساعات في اليوم (1 - 24)',
                 ),
-              ),
+              ),*/
           ],
         ),
       ),

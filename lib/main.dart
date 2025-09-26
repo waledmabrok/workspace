@@ -13,7 +13,7 @@ import 'core/db_helper_Subscribe.dart'; // للوصول إلى SubscriptionDb
 
 void main() async {
   TimeTicker.start();
-/*  await DbHelper.instance.database; // تأكد DB جاهز
+  /*  await DbHelper.instance.database; // تأكد DB جاهز
   print('calling closeShiftDetailed...');
   final shiftId = 'shift_test_1';
   // تأكد أن الشيفت موجود أو استعمل debugPopulateAndClose الذي ينشئ شيفت أولاً
@@ -81,6 +81,7 @@ class WorkspaceCashierApp extends StatelessWidget {
             ),
           ),
         ),
+
         // تخصيص الـ Dialog
         dialogTheme: DialogTheme(
           backgroundColor: const Color(0xFF1A2233), // لون خلفية الدايلوج
@@ -100,6 +101,11 @@ class WorkspaceCashierApp extends StatelessWidget {
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: Colors.transparent,
+          // الهينت يطلع كـ Label
+          labelStyle: const TextStyle(
+            color: Colors.white70,
+          ), // لونه لما مش Focus
+          floatingLabelStyle: const TextStyle(color: Colors.white),
           hintStyle: const TextStyle(color: Colors.white70),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
@@ -130,6 +136,7 @@ class WorkspaceCashierApp extends StatelessWidget {
           selectionColor: Colors.blueAccent, // لون تحديد النص
           selectionHandleColor: Colors.blueAccent, // لون الهاندلز بتاعة التحديد
         ),
+
         // تخصيص أزرار ElevatedButton (زي زرار الدخول)
         /*  elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(

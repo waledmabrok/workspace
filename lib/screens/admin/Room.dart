@@ -144,38 +144,73 @@ class _RoomsPageState extends State<RoomsPage> {
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(
-                  controller: freeCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'الدقائق المجانية',
-                  ),
+                CustomFormField(hint: 'الدقائق المجانية', controller: freeCtrl),
+                SizedBox(height: 10),
+                CustomFormField(
+                  hint: 'سعر أول ساعة',
+                  controller: firstHourCtrl,
                 ),
-                TextField(
+                SizedBox(height: 10),
+                CustomFormField(
+                  hint: 'سعر كل ساعة بعد الأولى',
+                  controller: perHourCtrl,
+                ),
+                SizedBox(height: 10),
+                CustomFormField(hint: 'الحد اليومي', controller: dailyCapCtrl),
+                SizedBox(height: 10),
+                /*   TextField(
                   controller: firstHourCtrl,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(labelText: 'سعر أول ساعة'),
-                ),
-                TextField(
+                ),*/
+                /*  TextField(
                   controller: perHourCtrl,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
                     labelText: 'سعر كل ساعة بعد الأولى',
                   ),
-                ),
-                TextField(
+                ),*/
+                /* TextField(
                   controller: dailyCapCtrl,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(labelText: 'الحد اليومي'),
-                ),
+                ),*/
               ],
             ),
             actions: [
-              TextButton(
+              CustomButton(
+                text: 'إلغاء',
+                onPressed: () => Navigator.pop(ctx),
+                infinity: false,
+                border: true,
+              ),
+              /* TextButton(
                 onPressed: () => Navigator.pop(ctx),
                 child: const Text('إلغاء'),
+              ),*/
+              CustomButton(
+                infinity: false,
+                text: 'حفظ',
+                onPressed: () async {
+                  final db = await dbHelper.database;
+                  await db.update(
+                    'rooms',
+                    {
+                      'firstFreeMinutesRoom': int.tryParse(freeCtrl.text) ?? 15,
+                      'firstHourFeeRoom':
+                          double.tryParse(firstHourCtrl.text) ?? 30,
+                      'perHourAfterFirstRoom':
+                          double.tryParse(perHourCtrl.text) ?? 20,
+                      'dailyCapRoom': double.tryParse(dailyCapCtrl.text) ?? 150,
+                    },
+                    where: 'id = ?',
+                    whereArgs: [room['id']],
+                  );
+                  Navigator.pop(ctx);
+                  _loadPricingAndRooms();
+                },
               ),
-              ElevatedButton(
+              /* ElevatedButton(
                 onPressed: () async {
                   final db = await dbHelper.database;
                   await db.update(
@@ -195,7 +230,7 @@ class _RoomsPageState extends State<RoomsPage> {
                   _loadPricingAndRooms();
                 },
                 child: const Text('حفظ'),
-              ),
+              ),*/
             ],
           ),
     );

@@ -60,7 +60,11 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
       if (!mounted) return;
       checkExpiringSessionsSub(context, _sessionsSub);
     });
-    _loadSessionsSub().then((_) => _applyDailyLimitForAllSessionsSub());
+    _loadSessionsSub().then((_) {
+      if (!mounted) return;
+      _applyDailyLimitForAllSessionsSub();
+    });
+
     reloadData();
     _uiTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (mounted) setState(() {});
@@ -1752,7 +1756,8 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                                                                       selectedSession,
                                                                     ),
                                                               );
-
+                                                              if (!mounted)
+                                                                return;
                                                               setState(() {
                                                                 _filteredSessionsSup =
                                                                     _sessionsSub;
@@ -2142,6 +2147,26 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                           drawerDelta: -diff, // خصم من الدرج بدل الإضافة
                         );
 
+                        // 🗑️ مسح الكارت من DB و Session
+                        // 2️⃣ بعد الدفع → مسح الكارت من DB
+                        for (var item in List<CartItem>.from(s.cart)) {
+                          await CartDb.deleteCartItem(item.id);
+                        }
+
+                        // 3️⃣ تأكد انك فضيت القائمة
+                        s.cart.clear();
+
+                        // 4️⃣ هات الكارت الفاضي من DB
+                        final updatedCart = await CartDb.getCartBySession(s.id);
+
+                        setState(() {
+                          s.cart = updatedCart; // ✅ تحديث من الداتا
+                        });
+
+                        // 5️⃣ اقفل الشيت بعد ما اتأكدنا انه اتمسح
+                        if (context.mounted) Navigator.pop(context);
+
+                        // 5️⃣ حدث الـ UI
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(
@@ -2182,8 +2207,26 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                       } catch (e, st) {
                         debugPrint('Failed to update drawer: $e\n$st');
                       }
+                      // 🗑️ مسح الكارت من DB و Session
+                      // 2️⃣ بعد الدفع → مسح الكارت من DB
+                      for (var item in List<CartItem>.from(s.cart)) {
+                        await CartDb.deleteCartItem(item.id);
+                      }
 
-                      Navigator.pop(context);
+                      // 3️⃣ تأكد انك فضيت القائمة
+                      s.cart.clear();
+
+                      // 4️⃣ هات الكارت الفاضي من DB
+                      final updatedCart = await CartDb.getCartBySession(s.id);
+
+                      setState(() {
+                        s.cart = updatedCart; // ✅ تحديث من الداتا
+                      });
+
+                      // 5️⃣ اقفل الشيت بعد ما اتأكدنا انه اتمسح
+                      if (context.mounted) Navigator.pop(context);
+
+                      // 5️⃣ حدث الsetـ UI
 
                       // إشعار للمستخدم بأن الباقي أخذ كاش
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -2313,7 +2356,22 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                       } catch (e, st) {
                         debugPrint('Failed to update drawer: $e\n$st');
                       }
+                      // 🗑️ مسح الكارت من DB و Session
+                      for (var item in List<CartItem>.from(s.cart)) {
+                        await CartDb.deleteCartItem(item.id);
+                      }
 
+                      s.cart.clear();
+
+                      // تحديث الكارت من DB بعد الدفع
+                      final updatedCart = await CartDb.getCartBySession(s.id);
+
+                      setState(() {
+                        s.cart =
+                            updatedCart; // ✅ هنا بيتم التحديث من الداتا مش من الذاكرة بس
+                      });
+
+                      // 5️⃣ حدث الـ UI
                       Navigator.pop(context);
 
                       // إشعار للمستخدم (باقي/له/عليه)
@@ -2361,7 +2419,7 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
     }
 
     Product? selectedProduct;
-    TextEditingController qtyCtrl = TextEditingController(text: '1');
+    TextEditingController qtyCtrl = TextEditingController(text: '0');
 
     return StatefulBuilder(
       builder: (context, setSheetState) {
@@ -2402,6 +2460,8 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                       );
                     }).toList(),
                 onChanged: (val) {
+                  if (!context.mounted) return;
+
                   setSheetState(() => selectedProduct = val);
                 },
               ),
@@ -2436,20 +2496,7 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                       if (selectedProduct == null) return;
 
                       final qty = int.tryParse(qtyCtrl.text) ?? 1;
-                      if (qty <= 0 || selectedProduct!.stock < qty) return;
-                      // خصم المخزون مباشرة
-                      selectedProduct!.stock -= qty;
-                      await ProductDb.insertProduct(
-                        selectedProduct!,
-                      ); // تحديث المخزون في DB
-
-                      // تحديث AdminDataService
-                      final index = AdminDataService.instance.products
-                          .indexWhere((p) => p.id == selectedProduct!.id);
-                      if (index != -1) {
-                        AdminDataService.instance.products[index].stock =
-                            selectedProduct!.stock;
-                      }
+                      if (qty <= 0) return;
 
                       // تحقق من المخزون
                       if (selectedProduct!.stock < qty) {
@@ -2463,15 +2510,18 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                         return;
                       }
 
-                      // خصم المخزون مؤقتًا
-                      /*    selectedProduct!.stock -= qty;
+                      // 1️⃣ خصم من المخزون مباشرة
+                      selectedProduct!.stock -= qty;
+
+                      // 2️⃣ تحديث AdminDataService
                       final index = AdminDataService.instance.products
                           .indexWhere((p) => p.id == selectedProduct!.id);
-                      if (index != -1)
+                      if (index != -1) {
                         AdminDataService.instance.products[index].stock =
-                            selectedProduct!.stock;*/
+                            selectedProduct!.stock;
+                      }
 
-                      // إضافة للكارت
+                      // 3️⃣ إضافة للكارت
                       final item = CartItem(
                         id: generateId(),
                         product: selectedProduct!,
@@ -2479,47 +2529,20 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                       );
                       await CartDb.insertCartItem(item, s.id);
 
+                      // 4️⃣ تحديث الكارت في الشاشة
                       final updatedCart = await CartDb.getCartBySession(s.id);
                       setSheetState(() => s.cart = updatedCart);
+
+                      qtyCtrl.clear();
                     },
                     infinity: false,
                   ),
-                  /* ElevatedButton(
-                    onPressed: () async {
-                      final qty = int.tryParse(qtyCtrl.text) ?? 1;
-                      if (selectedProduct != null) {
-                        final item = CartItem(
-                          id: generateId(),
-                          product: selectedProduct!,
-                          qty: qty,
-                        );
-
-                        await CartDb.insertCartItem(item, s.id);
-
-                        final updatedCart = await CartDb.getCartBySession(s.id);
-                        setSheetState(() => s.cart = updatedCart);
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blueAccent,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 14,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: const Text(
-                      'اضف',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),*/
                 ],
               ),
               const SizedBox(height: 12),
               // قائمة العناصر المضافة
               ...s.cart.map((item) {
+                bool isDeleting = false;
                 final qtyController = TextEditingController(
                   text: item.qty.toString(),
                 );
@@ -2586,18 +2609,38 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                       IconButton(
                         icon: const Icon(Icons.delete, color: Colors.redAccent),
                         onPressed: () async {
-                          await CartDb.deleteCartItem(item.id);
+                          if (isDeleting)
+                            return; // ⛔ تجاهل الضغط لو في عملية شغالة
+                          isDeleting = true;
 
-                          // إعادة الكمية للمخزون
-                          item.product.stock += item.qty;
-                          final idx = AdminDataService.instance.products
-                              .indexWhere((p) => p.id == item.product.id);
-                          if (idx != -1)
-                            AdminDataService.instance.products[idx].stock =
-                                item.product.stock;
+                          try {
+                            if (item.qty > 1) {
+                              // 🟢 قلل 1 من الكمية
+                              item.qty -= 1;
+                              item.product.stock += 1;
 
-                          s.cart.remove(item);
-                          setSheetState(() {});
+                              // تحديث DB
+                              await CartDb.updateCartItemQty(item.id, item.qty);
+                            } else {
+                              // 🟠 لو آخر واحدة → امسح العنصر
+                              await CartDb.deleteCartItem(item.id);
+
+                              item.product.stock += 1;
+                              s.cart.remove(item);
+                            }
+                            await ProductDb.insertProduct(item.product);
+                            // تحديث AdminDataService
+                            final idx = AdminDataService.instance.products
+                                .indexWhere((p) => p.id == item.product.id);
+                            if (idx != -1) {
+                              AdminDataService.instance.products[idx].stock =
+                                  item.product.stock;
+                            }
+
+                            setSheetState(() {});
+                          } finally {
+                            isDeleting = false; // ✅ فك القفل بعد انتهاء العملية
+                          }
                         },
                       ),
                     ],
@@ -2613,22 +2656,16 @@ class AdminSubscribersPageeState extends State<AdminSubscribersPagee> {
                   _completeAndPayForProducts(s);
 
                   // 2️⃣ خصم المخزون من المنتجات
-                  for (var item in s.cart) {
-                    await sellProduct(item.product, item.qty);
-
-                    // 3️⃣ امسح الـ controller
-                    qtyControllers[item.id]?.dispose();
-                    qtyControllers.remove(item.id);
-                  }
 
                   // 4️⃣ مسح الكارت من الذاكرة وDB
-                  for (var item in s.cart) {
+                  /*   for (var item in s.cart) {
                     await CartDb.deleteCartItem(item.id);
                   }
                   s.cart.clear();
 
                   // 5️⃣ حدث الـ UI
                   setSheetState(() {});
+*/
                 },
                 infinity: false,
                 color: Colors.green,

@@ -73,8 +73,9 @@ class _CustomFormFieldState extends State<CustomFormField> {
       onTap: widget.onTap,
       focusNode: _focusNode, // ✅ نمرر الـ focusNode الداخلي
       decoration: InputDecoration(
-        hintText: widget.hint,
-        hintStyle: const TextStyle(color: Colors.white70),
+        labelText: widget.hint, // الهينت يطلع كـ Label
+        labelStyle: const TextStyle(color: Colors.white70), // لونه لما مش Focus
+        floatingLabelStyle: const TextStyle(color: Colors.white),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: AppColorsDark.strokColor, width: 1.5),
