@@ -7,29 +7,25 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build_android_web:
     runs-on: ubuntu-latest
-
     steps:
-      # سحب الكود من GitHub
       - uses: actions/checkout@v3
-
-      # إعداد Flutter
       - uses: subosito/flutter-action@v2
         with:
           channel: beta
           flutter-version: '3.27.0'
-
-      # تثبيت dependencies
       - run: flutter pub get
-
-      # 🟢 Build APK
       - run: flutter build apk --release
-
-      # 🟢 Build Web
       - run: flutter build web --release
+      # رفع الـ APK والـ web build
+      - uses: actions/upload-artifact@v3
+        with:
+          name: flutter-builds
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/web
 
-      # 🟢 Build Windows (لازم نجربه على Windows runner مش Ubuntu)
   build_windows:
     runs-on: windows-latest
     steps:
@@ -39,19 +35,8 @@ jobs:
           flutter-version: '3.27.0'
       - run: flutter pub get
       - run: flutter build windows --release
-
-  # ✅ رفع النتائج كـ Artifact تقدر تحمّلها من GitHub
-  upload-artifacts:
-    needs: [build, build_windows]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v3
-        with:
-          path: ./artifacts
+      # رفع الـ Windows build
       - uses: actions/upload-artifact@v3
         with:
-          name: flutter-builds
-          path: |
-            build/app/outputs/flutter-apk/app-release.apk
-            build/web
-            build/windows/runner/Release
+          name: flutter-builds-windows
+          path: build/windows/runner/Release/
