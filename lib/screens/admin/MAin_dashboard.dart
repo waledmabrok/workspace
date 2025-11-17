@@ -90,10 +90,9 @@ class _DashboardPageState extends State<DashboardPagee> {
                 const SizedBox(width: 8),
                 CustomButton(
                   infinity: false,
-                  text:
-                      _selectedDate != null
-                          ? "${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}"
-                          : "كل الأيام",
+                  text: _selectedDate != null
+                      ? "${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}"
+                      : "كل الأيام",
                   onPressed: () async {
                     final picked = await showDatePicker(
                       context: context,
@@ -131,7 +130,6 @@ class _DashboardPageState extends State<DashboardPagee> {
                 ),
            */
                 const SizedBox(width: 12),
-
                 if (_selectedDate != null)
                   CustomButton(
                     infinity: false,
@@ -177,57 +175,47 @@ class _DashboardPageState extends State<DashboardPagee> {
                 InkWell(
                   onTap: () async {
                     final controller = TextEditingController(
-                      text: admin.drawerBalance.toStringAsFixed(2),
+                      text: admin.drawerBalance
+                          .toStringAsFixed(2), // الرصيد الحالي الإجمالي
                     );
 
                     final result = await showDialog<double>(
                       context: context,
-                      builder:
-                          (ctx) => AlertDialog(
-                            title: const Text("تعديل رصيد الدرج"),
-                            content: CustomFormField(
-                              hint: "الرصيد الجديد",
-                              controller: controller,
-                            ),
-                            /*  TextField(
-                              controller: controller,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: "الرصيد الجديد",
-                              ),
-                            ),*/
-                            actions: [
-                              CustomButton(
-                                text: "إلغاء",
-                                onPressed: () => Navigator.pop(ctx),
-                                infinity: false,
-                                border: true,
-                              ),
-                              SizedBox(width: 10),
-                              CustomButton(
-                                text: "حفظ",
-                                onPressed: () {
-                                  final value = double.tryParse(
-                                    controller.text,
-                                  );
-                                  Navigator.pop(ctx, value);
-                                },
-                                infinity: false,
-                              ),
-                            ],
+                      builder: (ctx) => AlertDialog(
+                        title: const Text("تعديل رصيد الدرج"),
+                        content: CustomFormField(
+                          hint: "الرصيد الجديد",
+                          controller: controller,
+                        ),
+                        actions: [
+                          CustomButton(
+                            text: "إلغاء",
+                            onPressed: () => Navigator.pop(ctx),
+                            infinity: false,
+                            border: true,
                           ),
+                          const SizedBox(width: 10),
+                          CustomButton(
+                            text: "حفظ",
+                            onPressed: () {
+                              final value = double.tryParse(controller.text);
+                              Navigator.pop(ctx, value);
+                            },
+                            infinity: false,
+                          ),
+                        ],
+                      ),
                     );
 
                     if (result != null) {
-                      await admin.setDrawerBalance(result);
-                      setState(() {}); // تحديث الشاشة
+                      await admin
+                          .setDrawerBalance(result); // تحديث الرصيد الكلي
+                      setState(() {}); // إعادة بناء الشاشة
                     }
                   },
                   child: _buildStatCard(
                     "رصيد الدرج",
-                    _selectedDate != null
-                        ? admin.getDrawerBalanceByDate(_selectedDate!)
-                        : admin.drawerBalance,
+                    admin.drawerBalance, // اعرض الرصيد الكلي دائمًا
                     Colors.orange,
                   ),
                 ),
@@ -256,17 +244,16 @@ class _DashboardPageState extends State<DashboardPagee> {
 
                 // ✅ فلترة حسب التاريخ لو مستخدم اختار تاريخ
                 if (_selectedDate != null) {
-                  shifts =
-                      shifts.where((s) {
-                        final openedAtStr = s['opened_at']?.toString();
-                        if (openedAtStr == null) return false;
-                        final openedAt = DateTime.tryParse(openedAtStr);
-                        if (openedAt == null) return false;
+                  shifts = shifts.where((s) {
+                    final openedAtStr = s['opened_at']?.toString();
+                    if (openedAtStr == null) return false;
+                    final openedAt = DateTime.tryParse(openedAtStr);
+                    if (openedAt == null) return false;
 
-                        return openedAt.year == _selectedDate!.year &&
-                            openedAt.month == _selectedDate!.month &&
-                            openedAt.day == _selectedDate!.day;
-                      }).toList();
+                    return openedAt.year == _selectedDate!.year &&
+                        openedAt.month == _selectedDate!.month &&
+                        openedAt.day == _selectedDate!.day;
+                  }).toList();
                 }
 
                 if (shifts.isEmpty) {
@@ -277,90 +264,84 @@ class _DashboardPageState extends State<DashboardPagee> {
 
                 //  final shifts = snapshot.data!;
                 return Column(
-                  children:
-                      shifts.map((s) {
-                        final openedAt = s['opened_at']?.toString() ?? "-";
-                        final closedAt = s['closed_at']?.toString() ?? "-";
-                        final shiftId =
-                            s['id']?.toString() ?? "-"; // بدل shiftId
-                        final cashierName =
-                            s['cashier_name']?.toString() ??
-                            "-"; // بدل signers أو null
-                        final openingBalance =
-                            (s['openingBalance'] as num?)?.toDouble() ?? 0.0;
-                        //   final finalClosingBalance = (s['finalClosingBalance'] as num?)?.toDouble() ?? 0.0;
-                        final totalSales =
-                            (s['totalSales'] as num?)?.toDouble() ?? 0.0;
-                        final finalClosingBalance =
-                            (s['closingBalance'] as num?)?.toDouble() ?? 0.0;
-                        final totalExpenses =
-                            (s['totalExpenses'] as num?)?.toDouble() ?? 0.0;
-                        //   final finalClosingBalance = totalSales + openingBalance;
-                        // final finalClosingBalance = (s['drawer_balance'] as num?)?.toDouble() ?? 0.0;
+                  children: shifts.map((s) {
+                    final openedAt = s['opened_at']?.toString() ?? "-";
+                    final closedAt = s['closed_at']?.toString() ?? "-";
+                    final shiftId = s['id']?.toString() ?? "-"; // بدل shiftId
+                    final cashierName = s['cashier_name']?.toString() ??
+                        "-"; // بدل signers أو null
+                    final openingBalance =
+                        (s['openingBalance'] as num?)?.toDouble() ?? 0.0;
+                    //   final finalClosingBalance = (s['finalClosingBalance'] as num?)?.toDouble() ?? 0.0;
+                    final totalSales =
+                        (s['totalSales'] as num?)?.toDouble() ?? 0.0;
+                    final finalClosingBalance =
+                        (s['closingBalance'] as num?)?.toDouble() ?? 0.0;
+                    final totalExpenses =
+                        (s['totalExpenses'] as num?)?.toDouble() ?? 0.0;
+                    //   final finalClosingBalance = totalSales + openingBalance;
+                    // final finalClosingBalance = (s['drawer_balance'] as num?)?.toDouble() ?? 0.0;
 
-                        //final openingBalance = (s['openingBalance'] as num?)?.toDouble()
-                        //   ?? ((s['finalClosingBalance'] as num?)?.toDouble() ?? 0.0) - ((s['totalSales'] as num?)?.toDouble() ?? 0.0);
+                    //final openingBalance = (s['openingBalance'] as num?)?.toDouble()
+                    //   ?? ((s['finalClosingBalance'] as num?)?.toDouble() ?? 0.0) - ((s['totalSales'] as num?)?.toDouble() ?? 0.0);
 
-                        return Card(
-                          color: AppColorsDark.bgCardColor,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            side: BorderSide(
-                              color: AppColorsDark.mainColor.withOpacity(0.4),
-                              width: 1.5,
+                    return Card(
+                      color: AppColorsDark.bgCardColor,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        side: BorderSide(
+                          color: AppColorsDark.mainColor.withOpacity(0.4),
+                          width: 1.5,
+                        ),
+                      ),
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: ListTile(
+                          title: Text("شيفت رقم $shiftId"),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(height: 8),
+                              Text(
+                                "فتح: ${formatDateTime(DateTime.parse(openedAt))}",
+                              ),
+                              SizedBox(height: 8),
+                              Text(
+                                "قفل: ${closedAt != "-" ? formatDateTime(DateTime.parse(closedAt)) : "-"}",
+                              ),
+                              SizedBox(height: 8),
+                              Text(
+                                "مبيعات: ${totalSales.toStringAsFixed(2)}",
+                              ),
+                              SizedBox(height: 8),
+                              Text(
+                                "مصروفات: ${totalExpenses.toStringAsFixed(2)}",
+                              ),
+                              SizedBox(height: 8),
+                              Text(
+                                "رصيد البداية: ${openingBalance.toStringAsFixed(2)}",
+                              ),
+                              SizedBox(height: 8),
+                              Text(
+                                "رصيد النهاية: ${finalClosingBalance.toStringAsFixed(2)}",
+                              ),
+                              SizedBox(height: 8),
+                            ],
+                          ),
+                          trailing: Text(
+                            "صافي ${(totalSales - totalExpenses).toStringAsFixed(2)}",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: (totalSales - totalExpenses) >= 0
+                                  ? Colors.green
+                                  : Colors.red,
                             ),
                           ),
-                          margin: const EdgeInsets.symmetric(vertical: 8),
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: ListTile(
-                              title: Text("شيفت رقم $shiftId"),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  SizedBox(height: 8),
-
-                                  Text(
-                                    "فتح: ${formatDateTime(DateTime.parse(openedAt))}",
-                                  ),
-                                  SizedBox(height: 8),
-                                  Text(
-                                    "قفل: ${closedAt != "-" ? formatDateTime(DateTime.parse(closedAt)) : "-"}",
-                                  ),
-                                  SizedBox(height: 8),
-
-                                  Text(
-                                    "مبيعات: ${totalSales.toStringAsFixed(2)}",
-                                  ),
-                                  SizedBox(height: 8),
-                                  Text(
-                                    "مصروفات: ${totalExpenses.toStringAsFixed(2)}",
-                                  ),
-                                  SizedBox(height: 8),
-                                  Text(
-                                    "رصيد البداية: ${openingBalance.toStringAsFixed(2)}",
-                                  ),
-                                  SizedBox(height: 8),
-                                  Text(
-                                    "رصيد النهاية: ${finalClosingBalance.toStringAsFixed(2)}",
-                                  ),
-                                  SizedBox(height: 8),
-                                ],
-                              ),
-                              trailing: Text(
-                                "صافي ${(totalSales - totalExpenses).toStringAsFixed(2)}",
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color:
-                                      (totalSales - totalExpenses) >= 0
-                                          ? Colors.green
-                                          : Colors.red,
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
+                        ),
+                      ),
+                    );
+                  }).toList(),
                 );
               },
             ),

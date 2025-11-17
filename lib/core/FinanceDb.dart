@@ -1,153 +1,3 @@
-// import 'Db_helper.dart';
-// import 'models.dart';
-// import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-// import 'dart:convert';
-//
-// class FinanceDb {
-//   // ---------- مصاريف ومبيعات (بقي كما كان مع ضمان تحويل النوع double) ----------
-//   static Future<void> insertExpense(Expense e) async {
-//     final db = await DbHelper.instance.database;
-//     await db.insert('expenses', {
-//       'id': e.id,
-//       'title': e.title,
-//       'amount': e.amount,
-//       'date': e.date.millisecondsSinceEpoch,
-//     }, conflictAlgorithm: ConflictAlgorithm.replace);
-//   }
-//
-//   static Future<void> insertSale(
-//       Sale s, {
-//         String? paymentMethod,
-//         String? customerId,
-//         String? customerName,
-//         double? discount,
-//       }) async {
-//     final db = await DbHelper.instance.database;
-//     await db.insert('sales', {
-//       'id': s.id,
-//       'description': s.description,
-//       'amount': s.amount,
-//       'discount': discount ?? 0.0,
-//       'date': s.date.millisecondsSinceEpoch,
-//       'paymentMethod': paymentMethod,
-//       'customerId': customerId,
-//       'customerName': customerName,
-//     }, conflictAlgorithm: ConflictAlgorithm.replace);
-//   }
-//
-//   static Future<List<Expense>> getExpenses() async {
-//     final db = await DbHelper.instance.database;
-//     final maps = await db.query('expenses');
-//     return maps
-//         .map(
-//           (m) => Expense(
-//         id: m['id'] as String,
-//         title: m['title'] as String,
-//         amount: (m['amount'] as num).toDouble(),
-//         date: DateTime.fromMillisecondsSinceEpoch(m['date'] as int),
-//       ),
-//     )
-//         .toList();
-//   }
-//
-//   static Future<List<Sale>> getSales() async {
-//     final db = await DbHelper.instance.database;
-//     final maps = await db.query('sales');
-//     return maps
-//         .map(
-//           (m) => Sale(
-//         id: m['id'] as String,
-//         description: m['description'] as String,
-//         amount: (m['amount'] as num).toDouble(),
-//         date: DateTime.fromMillisecondsSinceEpoch(m['date'] as int),
-//       ),
-//     )
-//         .toList();
-//   }
-//
-//   // ---------- درج الكاشير ----------
-//   // احصل الرصيد (لو ما فيش سجل → أنشئ واحد بصفر)
-//   static Future<double> getDrawerBalance() async {
-//     final db = await DbHelper.instance.database;
-//     final rows = await db.query('drawer', where: 'id = ?', whereArgs: [1], limit: 1);
-//     if (rows.isEmpty) {
-//       await db.insert('drawer', {'id': 1, 'balance': 0.0});
-//       return 0.0;
-//     }
-//     final bal = rows.first['balance'];
-//     return (bal as num).toDouble();
-//   }
-//
-//   // ضف/اطرح مبلغ من درج الكاش (delta موجب = اضافة، سالب = سحب)
-//   static Future<void> updateDrawerBalanceBy(double delta) async {
-//     final db = await DbHelper.instance.database;
-//     final current = await getDrawerBalance();
-//     final updated = current + delta;
-//     await db.update('drawer', {'balance': updated}, where: 'id = ?', whereArgs: [1]);
-//   }
-//
-//   // عيّن رصيد الدرج بقيمة محددة
-//   static Future<void> setDrawerBalance(double newBalance) async {
-//     final db = await DbHelper.instance.database;
-//     final exists = (await db.query('drawer', where: 'id = ?', whereArgs: [1])).isNotEmpty;
-//     if (exists) {
-//       await db.update('drawer', {'balance': newBalance}, where: 'id = ?', whereArgs: [1]);
-//     } else {
-//       await db.insert('drawer', {'id': 1, 'balance': newBalance});
-//     }
-//   }
-//
-//   // ---------- أرصدة العملاء (موجب = رصيد للعميل، سالب = دين عليه) ----------
-//   static Future<double> getCustomerBalance(String name) async {
-//     final db = await DbHelper.instance.database;
-//     final rows = await db.query('customer_balances', where: 'name = ?', whereArgs: [name], limit: 1);
-//     if (rows.isEmpty) return 0.0;
-//     final bal = rows.first['balance'];
-//     return (bal as num).toDouble();
-//   }
-//
-//   static Future<void> setCustomerBalance(String name, double newBalance) async {
-//     final db = await DbHelper.instance.database;
-//     await db.insert('customer_balances', {'name': name, 'balance': newBalance},
-//         conflictAlgorithm: ConflictAlgorithm.replace);
-//   }
-//
-//   static Future<void> adjustCustomerBalance(String name, double delta) async {
-//     final current = await getCustomerBalance(name);
-//     final updated = current + delta;
-//     await setCustomerBalance(name, updated);
-//   }
-//
-//   // ---------- قفل الشيفت ----------
-//   // signers: List<String> بأسماء الثلاث أشخاص
-//   static Future<void> closeShift({
-//     required String id,
-//     required List<String> signers,
-//     required double drawerBalanceAtClose,
-//     required double totalSales,
-//     DateTime? closedAt,
-//   }) async {
-//     final db = await DbHelper.instance.database;
-//     final now = (closedAt ?? DateTime.now()).millisecondsSinceEpoch;
-//     final signersJson = jsonEncode(signers);
-//     await db.insert('shifts', {
-//       'id': id,
-//       'closed_at': now,
-//       'signers': signersJson,
-//       'drawer_balance': drawerBalanceAtClose,
-//       'total_sales': totalSales,
-//     }, conflictAlgorithm: ConflictAlgorithm.replace);
-//   }
-//
-//   // اختياري: استعلام shifts
-//   static Future<List<Map<String, dynamic>>> getShifts() async {
-//     final db = await DbHelper.instance.database;
-//     return await db.query('shifts', orderBy: 'closed_at DESC');
-//   }
-// }
-
-// lib/core/FinanceDb.dart
-
 import 'Db_helper.dart';
 import 'models.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -159,13 +9,16 @@ class FinanceDb {
     final db = await DbHelper.instance.database;
 
     // تخزين المصروف في جدول expenses
-    await db.insert('expenses', {
-      'id': e.id,
-      'title': e.title,
-      'amount': e.amount,
-      'date': e.date.millisecondsSinceEpoch,
-      'shiftId': shiftId,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+        'expenses',
+        {
+          'id': e.id,
+          'title': e.title,
+          'amount': e.amount,
+          'date': e.date.millisecondsSinceEpoch,
+          'shiftId': shiftId,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
 
     // إضافة حركة في shift_transactions إذا تم تمرير shiftId
     if (shiftId != null) {
@@ -210,20 +63,27 @@ class FinanceDb {
     double? discount,
   }) async {
     final db = await DbHelper.instance.database;
-    await db.insert('sales', {
-      'id': s.id,
-      'description': s.description,
-      'amount': s.amount,
-      'discount': discount ?? 0.0,
-      'date': s.date.millisecondsSinceEpoch,
-      'paymentMethod': paymentMethod,
-      'customerId': customerId,
-      'customerName': customerName,
-      'shiftId': s.shiftId,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+      'sales',
+      {
+        'id': s.id,
+        'description': s.description,
+        'amount': s.amount,
+        'discount': discount ?? 0.0,
+        'date': s.date.millisecondsSinceEpoch,
+        'paymentMethod': paymentMethod,
+        'customerId': customerId,
+        'customerName': customerName,
+        'shiftId': s.shiftId,
+        'itemsJson': jsonEncode(
+          s.items.map((i) => i.toJson()).toList(),
+        ),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
-  static Future<List<Sale>> getSales({String? shiftId}) async {
+  /*static Future<List<Sale>> getSales({String? shiftId}) async {
     final db = await DbHelper.instance.database;
     final maps = await db.query(
       'sales',
@@ -240,6 +100,38 @@ class FinanceDb {
           ),
         )
         .toList();
+  }
+*/
+  static Future<List<Sale>> getSales({String? shiftId}) async {
+    final db = await DbHelper.instance.database;
+    final maps = await db.query(
+      'sales',
+      where: shiftId != null ? 'shiftId = ?' : null,
+      whereArgs: shiftId != null ? [shiftId] : null,
+    );
+
+    return maps.map((m) {
+      List<CartItem> items = [];
+      try {
+        final decoded = jsonDecode(m['itemsJson']?.toString() ?? '[]') as List;
+        items = decoded.map((j) => CartItem.fromJson(j)).toList();
+      } catch (e) {
+        items = [];
+      }
+
+      return Sale(
+        id: m['id'] as String,
+        description: m['description'] as String,
+        amount: (m['amount'] as num).toDouble(),
+        discount: (m['discount'] as num?)?.toDouble() ?? 0.0,
+        date: DateTime.fromMillisecondsSinceEpoch(m['date'] as int),
+        paymentMethod: m['paymentMethod'] as String? ?? 'cash',
+        customerId: m['customerId'] as String?,
+        customerName: m['customerName'] as String?,
+        shiftId: m['shiftId']?.toString(),
+        items: items, // ✅ استرجاع المنتجات
+      );
+    }).toList();
   }
 
   // ------------------- Drawer -------------------
@@ -297,10 +189,13 @@ class FinanceDb {
     double newBalance,
   ) async {
     final db = await DbHelper.instance.database;
-    await db.insert('customer_balances', {
-      'customerId': customerId,
-      'balance': newBalance,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+        'customer_balances',
+        {
+          'customerId': customerId,
+          'balance': newBalance,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   static Future<void> adjustCustomerBalance(
@@ -365,5 +260,79 @@ class FinanceDb {
       Expense(id: genId(), title: title, amount: amount, date: DateTime.now()),
       shiftId: shiftId,
     );
+  }
+
+  static Future<void> insertOrUpdateSale(
+    Sale s, {
+    String? paymentMethod,
+    String? customerId,
+    String? customerName,
+    double? discount,
+  }) async {
+    final db = await DbHelper.instance.database;
+
+    // 🔍 هل يوجد Sale بنفس id؟
+    final existing = await db.query(
+      'sales',
+      where: 'id = ?',
+      whereArgs: [s.id],
+      limit: 1,
+    );
+
+    if (existing.isNotEmpty) {
+      // ✅ لو موجود → اجمع المنتجات
+      final old = Sale.fromMap(existing.first);
+
+      // دمج العناصر (لو فيه منتجات مكررة، نزود الكمية بدل ما نكررها)
+      final mergedItems = <CartItem>[];
+      final mapById = <String, CartItem>{};
+
+      for (var item in [...old.items, ...s.items]) {
+        if (mapById.containsKey(item.product.id)) {
+          mapById[item.product.id]!.qty += item.qty;
+        } else {
+          mapById[item.product.id] = item.copy();
+        }
+      }
+      mergedItems.addAll(mapById.values);
+
+      // تحديث السطر
+      await db.update(
+        'sales',
+        {
+          'description': s.description,
+          'amount': s.amount + old.amount, // نجمع المبلغ مع القديم
+          'discount': discount ?? old.discount,
+          'date': s.date.millisecondsSinceEpoch,
+          'paymentMethod': paymentMethod ?? old.paymentMethod,
+          'customerId': customerId ?? old.customerId,
+          'customerName': customerName ?? old.customerName,
+          'shiftId': s.shiftId ?? old.shiftId,
+          'itemsJson': jsonEncode(mergedItems.map((i) => i.toJson()).toList()),
+        },
+        where: 'id = ?',
+        whereArgs: [s.id],
+      );
+    } else {
+      // 🆕 لو مش موجود → أدخله جديد
+      await db.insert(
+        'sales',
+        {
+          'id': s.id,
+          'description': s.description,
+          'amount': s.amount,
+          'discount': discount ?? 0.0,
+          'date': s.date.millisecondsSinceEpoch,
+          'paymentMethod': paymentMethod,
+          'customerId': customerId,
+          'customerName': customerName,
+          'shiftId': s.shiftId,
+          'itemsJson': jsonEncode(
+            s.items.map((i) => i.toJson()).toList(),
+          ),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
   }
 }

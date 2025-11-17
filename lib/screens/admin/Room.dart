@@ -5,6 +5,7 @@ import 'package:workspace/utils/colors.dart';
 import 'package:workspace/widget/buttom.dart';
 import 'package:workspace/widget/form.dart';
 import '../../core/Db_helper.dart';
+import '../../core/models.dart';
 
 class RoomsPage extends StatefulWidget {
   const RoomsPage({Key? key}) : super(key: key);
@@ -30,6 +31,42 @@ class _RoomsPageState extends State<RoomsPage> {
   void initState() {
     super.initState();
     _loadPricingAndRooms();
+  }
+
+  Future<List<Map<String, dynamic>>> getAllBookingsForRoom(
+      String roomId) async {
+    final db = await dbHelper.database;
+    return db.query(
+      'room_bookings',
+      where: 'roomId = ?',
+      whereArgs: [roomId],
+      orderBy: 'startTime DESC',
+    );
+  }
+
+  Future<List<CartItem>> getCartForBooking(String bookingId) async {
+    final db = await dbHelper.database;
+    final cartRows = await db.query(
+      'cart',
+      where: 'bookingId = ?',
+      whereArgs: [bookingId],
+    );
+
+    return cartRows.map((row) {
+      return CartItem(
+        id: row['id'].toString(), // تحويل لأي ID string
+        product: Product(
+          id: row['productId'].toString(),
+          name:
+              row['productName']?.toString() ?? 'بدون اسم', // تأكد انها string
+          price: (row['price'] is int)
+              ? (row['price'] as int).toDouble()
+              : (row['price'] as double? ?? 0.0), // تحويل لأي double
+          stock: 0,
+        ),
+        qty: (row['qty'] as int?) ?? 1, // تحويل لأي int
+      );
+    }).toList();
   }
 
   Future<void> _loadPricingAndRooms() async {
@@ -82,43 +119,40 @@ class _RoomsPageState extends State<RoomsPage> {
     final nameCtrl = TextEditingController();
     await showDialog(
       context: context,
-      builder:
-          (ctx) => AlertDialog(
-            title: const Text('إضافة غرفة جديدة'),
-            content: TextField(
-              controller: nameCtrl,
-              decoration: const InputDecoration(labelText: 'اسم الغرفة'),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('إلغاء'),
-              ),
-              ElevatedButton(
-                onPressed: () async {
-                  final name = nameCtrl.text.trim();
-                  if (name.isNotEmpty) {
-                    final db = await dbHelper.database;
-                    await db.insert('rooms', {
-                      'id': _uuid.v4(),
-                      'name': name,
-                      // تطبيق التسعيرة العامة على الغرفة الجديدة
-                      'firstFreeMinutesRoom':
-                          int.tryParse(_freeMinutes.text) ?? 15,
-                      'firstHourFeeRoom':
-                          double.tryParse(_firstHour.text) ?? 30,
-                      'perHourAfterFirstRoom':
-                          double.tryParse(_perHourAfter.text) ?? 20,
-                      'dailyCapRoom': double.tryParse(_dailyCap.text) ?? 150,
-                    });
-                    Navigator.pop(ctx);
-                    _loadPricingAndRooms();
-                  }
-                },
-                child: const Text('إضافة'),
-              ),
-            ],
+      builder: (ctx) => AlertDialog(
+        title: const Text('إضافة غرفة جديدة'),
+        content: TextField(
+          controller: nameCtrl,
+          decoration: const InputDecoration(labelText: 'اسم الغرفة'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
           ),
+          ElevatedButton(
+            onPressed: () async {
+              final name = nameCtrl.text.trim();
+              if (name.isNotEmpty) {
+                final db = await dbHelper.database;
+                await db.insert('rooms', {
+                  'id': _uuid.v4(),
+                  'name': name,
+                  // تطبيق التسعيرة العامة على الغرفة الجديدة
+                  'firstFreeMinutesRoom': int.tryParse(_freeMinutes.text) ?? 15,
+                  'firstHourFeeRoom': double.tryParse(_firstHour.text) ?? 30,
+                  'perHourAfterFirstRoom':
+                      double.tryParse(_perHourAfter.text) ?? 20,
+                  'dailyCapRoom': double.tryParse(_dailyCap.text) ?? 150,
+                });
+                Navigator.pop(ctx);
+                _loadPricingAndRooms();
+              }
+            },
+            child: const Text('إضافة'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -138,79 +172,77 @@ class _RoomsPageState extends State<RoomsPage> {
 
     await showDialog(
       context: context,
-      builder:
-          (ctx) => AlertDialog(
-            title: Text('تعديل ${room['name']}'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CustomFormField(hint: 'الدقائق المجانية', controller: freeCtrl),
-                SizedBox(height: 10),
-                CustomFormField(
-                  hint: 'سعر أول ساعة',
-                  controller: firstHourCtrl,
-                ),
-                SizedBox(height: 10),
-                CustomFormField(
-                  hint: 'سعر كل ساعة بعد الأولى',
-                  controller: perHourCtrl,
-                ),
-                SizedBox(height: 10),
-                CustomFormField(hint: 'الحد اليومي', controller: dailyCapCtrl),
-                SizedBox(height: 10),
-                /*   TextField(
+      builder: (ctx) => AlertDialog(
+        title: Text('تعديل ${room['name']}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CustomFormField(hint: 'الدقائق المجانية', controller: freeCtrl),
+            SizedBox(height: 10),
+            CustomFormField(
+              hint: 'سعر أول ساعة',
+              controller: firstHourCtrl,
+            ),
+            SizedBox(height: 10),
+            CustomFormField(
+              hint: 'سعر كل ساعة بعد الأولى',
+              controller: perHourCtrl,
+            ),
+            SizedBox(height: 10),
+            CustomFormField(hint: 'الحد اليومي', controller: dailyCapCtrl),
+            SizedBox(height: 10),
+            /*   TextField(
                   controller: firstHourCtrl,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(labelText: 'سعر أول ساعة'),
                 ),*/
-                /*  TextField(
+            /*  TextField(
                   controller: perHourCtrl,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
                     labelText: 'سعر كل ساعة بعد الأولى',
                   ),
                 ),*/
-                /* TextField(
+            /* TextField(
                   controller: dailyCapCtrl,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(labelText: 'الحد اليومي'),
                 ),*/
-              ],
-            ),
-            actions: [
-              CustomButton(
-                text: 'إلغاء',
-                onPressed: () => Navigator.pop(ctx),
-                infinity: false,
-                border: true,
-              ),
-              /* TextButton(
+          ],
+        ),
+        actions: [
+          CustomButton(
+            text: 'إلغاء',
+            onPressed: () => Navigator.pop(ctx),
+            infinity: false,
+            border: true,
+          ),
+          /* TextButton(
                 onPressed: () => Navigator.pop(ctx),
                 child: const Text('إلغاء'),
               ),*/
-              CustomButton(
-                infinity: false,
-                text: 'حفظ',
-                onPressed: () async {
-                  final db = await dbHelper.database;
-                  await db.update(
-                    'rooms',
-                    {
-                      'firstFreeMinutesRoom': int.tryParse(freeCtrl.text) ?? 15,
-                      'firstHourFeeRoom':
-                          double.tryParse(firstHourCtrl.text) ?? 30,
-                      'perHourAfterFirstRoom':
-                          double.tryParse(perHourCtrl.text) ?? 20,
-                      'dailyCapRoom': double.tryParse(dailyCapCtrl.text) ?? 150,
-                    },
-                    where: 'id = ?',
-                    whereArgs: [room['id']],
-                  );
-                  Navigator.pop(ctx);
-                  _loadPricingAndRooms();
+          CustomButton(
+            infinity: false,
+            text: 'حفظ',
+            onPressed: () async {
+              final db = await dbHelper.database;
+              await db.update(
+                'rooms',
+                {
+                  'firstFreeMinutesRoom': int.tryParse(freeCtrl.text) ?? 15,
+                  'firstHourFeeRoom': double.tryParse(firstHourCtrl.text) ?? 30,
+                  'perHourAfterFirstRoom':
+                      double.tryParse(perHourCtrl.text) ?? 20,
+                  'dailyCapRoom': double.tryParse(dailyCapCtrl.text) ?? 150,
                 },
-              ),
-              /* ElevatedButton(
+                where: 'id = ?',
+                whereArgs: [room['id']],
+              );
+              Navigator.pop(ctx);
+              _loadPricingAndRooms();
+            },
+          ),
+          /* ElevatedButton(
                 onPressed: () async {
                   final db = await dbHelper.database;
                   await db.update(
@@ -231,8 +263,8 @@ class _RoomsPageState extends State<RoomsPage> {
                 },
                 child: const Text('حفظ'),
               ),*/
-            ],
-          ),
+        ],
+      ),
     );
   }
 
@@ -283,7 +315,6 @@ class _RoomsPageState extends State<RoomsPage> {
             _buildCardField(_perHourAfter, 'سعر كل ساعة بعد الأولى'),
             _buildCardField(_dailyCap, 'الحد اليومي الأعلى'),
             const SizedBox(height: 12),
-
             Padding(
               padding: const EdgeInsets.all(16.0),
               child: CustomButton(
@@ -330,7 +361,6 @@ class _RoomsPageState extends State<RoomsPage> {
                             onPressed: () => _deleteRoom(room['id']),
                             infinity: false,
                             color: Colors.red,
-
                             border: true,
                           ),
                           /* ElevatedButton(
@@ -355,25 +385,23 @@ class _RoomsPageState extends State<RoomsPage> {
                             child: const Text("لا يوجد حجوزات نشطة"),
                           );
                         return Column(
-                          children:
-                              bookings.map((booking) {
-                                final start =
-                                    DateTime.fromMillisecondsSinceEpoch(
-                                      booking['startTime'],
-                                    );
-                                final formatter = DateFormat(
-                                  'EEEE، d MMMM yyyy – الساعه  HH:mm',
-                                  'ar',
-                                );
-                                final formattedStart = formatter.format(start);
-                                return ListTile(
-                                  title: Text(
-                                    "${booking['customerName']} - ${booking['numPersons']} أشخاص",
-                                  ),
-                                  subtitle: Text("بدأ: $formattedStart"),
-                                  trailing: Text("🕒 مفتوح"),
-                                );
-                              }).toList(),
+                          children: bookings.map((booking) {
+                            final start = DateTime.fromMillisecondsSinceEpoch(
+                              booking['startTime'],
+                            );
+                            final formatter = DateFormat(
+                              'EEEE، d MMMM yyyy – الساعه  HH:mm',
+                              'ar',
+                            );
+                            final formattedStart = formatter.format(start);
+                            return ListTile(
+                              title: Text(
+                                "${booking['customerName']} - ${booking['numPersons']} أشخاص",
+                              ),
+                              subtitle: Text("بدأ: $formattedStart"),
+                              trailing: Text("🕒 مفتوح"),
+                            );
+                          }).toList(),
                         );
                       },
                     ),

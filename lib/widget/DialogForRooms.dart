@@ -7,11 +7,11 @@ import '../core/db_helper_customers.dart';
 import '../core/db_helper_sessions.dart';
 import '../core/models.dart';
 
-class ReceiptDialog extends StatefulWidget {
+class ReceiptDialogRooms extends StatefulWidget {
   final Session session;
   final double? fixedAmount; // 🟢 المبلغ الثابت (اختياري)
   final String? description;
-  const ReceiptDialog({
+  const ReceiptDialogRooms({
     super.key,
     required this.session,
     this.fixedAmount,
@@ -19,10 +19,10 @@ class ReceiptDialog extends StatefulWidget {
   });
 
   @override
-  State<ReceiptDialog> createState() => _ReceiptDialogState();
+  State<ReceiptDialogRooms> createState() => _ReceiptDialogRoomsState();
 }
 
-class _ReceiptDialogState extends State<ReceiptDialog> {
+class _ReceiptDialogRoomsState extends State<ReceiptDialogRooms> {
   late TextEditingController paidCtrl;
   String paymentMethod = "cash";
   Customer? _currentCustomer;
@@ -184,8 +184,7 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                   await AdminDataService.instance.addSale(
                     Sale(
                       id: generateId(),
-                      description:
-                          'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة = ${timeCharge.toStringAsFixed(2)} ج + منتجات = ${productsTotal.toStringAsFixed(2)} ج',
+                      description: 'سداد الباقي كاش للعميل',
                       amount: diff,
                     ),
                     paymentMethod: 'cash',
@@ -214,17 +213,15 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                   s.isActive = true;
                   s.isPaused = false; // لو عايز العداد يشتغل تاني
                 });
-/*
                 s.cart.clear(); // 🟢 مسح المنتجات بعد الدفع
-*/
 
                 await SessionDb.updateSession(s);
 
-                // حفظ المبيعة كما هي
+                /*   // حفظ المبيعة كما هي
                 final sale = Sale(
                   id: generateId(),
                   description:
-                      'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة + منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}',
+                  'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة + منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}',
                   amount: paidAmount,
                 );
 
@@ -233,7 +230,7 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                   paymentMethod: paymentMethod,
                   customer: _currentCustomer,
                   updateDrawer: paymentMethod == "cash",
-                );
+                );*/
 
                 try {
                   await _loadDrawerBalance();
@@ -337,21 +334,42 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                 });
                 await SessionDb.updateSession(s);
 
-                // ---- حفظ المبيعة ----
+                // // ---- حفظ المبيعة ----
+                // final sale = Sale(
+                //   id: generateId(),
+                //   description:
+                //   'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة + منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}'
+                //       '${appliedCode != null ? " (بكود $appliedCode)" : ""}',
+                //   amount: paidAmount,
+                // );
+                //
+                // await AdminDataService.instance.addSale(
+                //   sale,
+                //   paymentMethod: paymentMethod,
+                //   customer: _currentCustomer,
+                //   updateDrawer: paymentMethod == "cash",
+                // );
+// ---- حفظ المبيعة (على الحساب) ----
                 final sale = Sale(
                   id: generateId(),
                   description:
-                      'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة + منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}'
-                      '${appliedCode != null ? " (بكود $appliedCode)" : ""}',
-                  amount: paidAmount,
+                      'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة + منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}',
+                  amount: requiredAmount, // 🟢 إجمالي المبلغ
+                  customerId: targetCustomerId,
+                  date: DateTime.now(),
+                  items: List.from(s.cart),
+                  paymentMethod: "credit", // علشان يتسجل إنه علي الحساب
                 );
 
+// تسجل في الذاكرة و DB بدون تأثير على الدرج
                 await AdminDataService.instance.addSale(
                   sale,
-                  paymentMethod: paymentMethod,
+                  paymentMethod: "credit",
                   customer: _currentCustomer,
-                  updateDrawer: paymentMethod == "cash",
+                  updateDrawer: false,
                 );
+
+                await FinanceDb.insertSale(sale);
 
                 try {
                   await _loadDrawerBalance();

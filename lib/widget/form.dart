@@ -9,7 +9,8 @@ class CustomFormField extends StatefulWidget {
   final TextInputType keyboardType;
   final String? Function(String?)? validator;
   final void Function(String)? onChanged;
-
+  final TextInputAction textInputAction; // ✅ الجديد
+  final void Function()? onSubmit;
   final bool readOnly;
   final VoidCallback? onTap;
 
@@ -28,6 +29,8 @@ class CustomFormField extends StatefulWidget {
     this.readOnly = false,
     this.onTap,
     this.autoFocus = false, // ✅ القيمة الافتراضية false
+    this.textInputAction = TextInputAction.next, // default للانتقال للي بعده
+    this.onSubmit,
   });
 
   @override
@@ -71,6 +74,14 @@ class _CustomFormFieldState extends State<CustomFormField> {
       textAlign: widget.centerHint ? TextAlign.center : TextAlign.start,
       readOnly: widget.readOnly,
       onTap: widget.onTap,
+      textInputAction: widget.textInputAction, // ✅ التحكم في زر Enter
+      onFieldSubmitted: (_) {
+        if (widget.onSubmit != null) {
+          widget.onSubmit!(); // لو فيه callback مخصص
+        } else {
+          _focusNode.nextFocus(); // لو مفيش callback → روح للـ next field
+        }
+      },
       focusNode: _focusNode, // ✅ نمرر الـ focusNode الداخلي
       decoration: InputDecoration(
         labelText: widget.hint, // الهينت يطلع كـ Label
@@ -80,6 +91,7 @@ class _CustomFormFieldState extends State<CustomFormField> {
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: AppColorsDark.strokColor, width: 1.5),
         ),
+
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(
@@ -87,20 +99,19 @@ class _CustomFormFieldState extends State<CustomFormField> {
             width: 2,
           ),
         ),
-        suffixIcon:
-            widget.isPassword
-                ? IconButton(
-                  icon: Icon(
-                    _obscure ? Icons.visibility_off : Icons.visibility,
-                    color: Colors.white,
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _obscure = !_obscure;
-                    });
-                  },
-                )
-                : null,
+        suffixIcon: widget.isPassword
+            ? IconButton(
+                icon: Icon(
+                  _obscure ? Icons.visibility_off : Icons.visibility,
+                  color: Colors.white,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _obscure = !_obscure;
+                  });
+                },
+              )
+            : null,
       ),
       style: const TextStyle(color: Colors.white),
     );

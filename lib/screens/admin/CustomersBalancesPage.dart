@@ -19,6 +19,7 @@ class _CustomersBalancesPageState extends State<CustomersBalancesPage>
   @override
   void initState() {
     super.initState();
+
     _tabController = TabController(length: 2, vsync: this);
     _loadCustomers();
   }

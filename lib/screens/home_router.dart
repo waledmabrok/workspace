@@ -19,7 +19,13 @@ class _HomeRouterState extends State<HomeRouter> {
 
   @override
   void initState() {
+    _loadData();
     super.initState();
+  }
+
+  Future<void> _loadData() async {
+    await AdminDataService.instance.loadPasswords();
+    setState(() {}); // 🟢 هيجبر الواجهة تعيد بناء نفسها
   }
 
   Future<void> _openShiftOnStart() async {
@@ -119,6 +125,7 @@ class _HomeRouterState extends State<HomeRouter> {
                       const CashierScreen(),
                       correctPassword:
                           AdminDataService.instance.cashierPassword,
+                      openShift: true,
                     ),
                   ],
                 ),
@@ -135,6 +142,7 @@ class _HomeRouterState extends State<HomeRouter> {
     String title,
     IconData icon,
     Widget route, {
+    bool openShift = false,
     required String correctPassword,
   }) {
     return ElevatedButton(
@@ -146,8 +154,17 @@ class _HomeRouterState extends State<HomeRouter> {
       onPressed: () async {
         final ok = await _askForPassword(context, correctPassword);
         if (ok) {
-          _openShiftOnStart();
-          Navigator.of(context).push(MaterialPageRoute(builder: (_) => route));
+          if (openShift) {
+            await _openShiftOnStart(); // 🔹 فقط للكاشير
+          }
+          Navigator.of(context)
+              .push(
+            MaterialPageRoute(builder: (_) => route),
+          )
+              .then((_) async {
+            await AdminDataService.instance.loadPasswords();
+            setState(() {}); // يجبر الواجهة تعيد بناء نفسها بكلمة السر الجديدة
+          });
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("كلمة المرور غير صحيحة")),

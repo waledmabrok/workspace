@@ -20,6 +20,7 @@ import '../../widget/buttom.dart';
 import '../../widget/dropDown.dart';
 import '../../widget/form.dart';
 import '../admin/CustomerSubscribe.dart';
+import 'SearchBalanceCustomer.dart';
 import 'notification.dart';
 import 'Rooms.dart';
 import '../../core/db_helper_customer_balance.dart';
@@ -81,7 +82,6 @@ class _CashierScreenState extends State<CashierScreen>
 
   Future<void> _applyDailyLimitForAllSessionsSub() async {
     final now = DateTime.now();
-    debugPrint("⏳ [_applyDailyLimitForAllSessions] Checking at $now ...");
 
     final toConvert = <Session>[];
 
@@ -428,7 +428,7 @@ class _CashierScreenState extends State<CashierScreen>
         await _loadBadge(); // تحديث الرقم فورًا
       }
       // هتنتهي خلال أقل من ساعة
-      else if (s.end != null && s.end!.difference(now).inMinutes <= 58) {
+      else if (s.end != null && s.end!.difference(now).inMinutes <= 10) {
         await _notifyExpiring(s);
         e.add(s);
         await _loadBadge();
@@ -536,6 +536,7 @@ class _CashierScreenState extends State<CashierScreen>
     });
   }
 
+/*
   int getSessionMinutes(Session s) {
     // invariant:
     // - s.elapsedMinutes = مجموع دقائق الفترات المنتهية سابقاً
@@ -543,6 +544,22 @@ class _CashierScreenState extends State<CashierScreen>
     if (s.isPaused) {
       return s.elapsedMinutes;
     } else {
+      final since = s.pauseStart ?? s.start;
+      return s.elapsedMinutes + DateTime.now().difference(since).inMinutes;
+    }
+  }*/
+  int getSessionMinutes(Session s) {
+    if (!s.isActive) {
+      // الجلسة انتهت → نحسب الوقت الكلي من start لـ end + أي elapsed سابق
+      final endTime = s.end ?? DateTime.now();
+      return s.elapsedMinutes + endTime.difference(s.start).inMinutes;
+    }
+
+    if (s.isPaused) {
+      // الجلسة متوقفة مؤقتًا
+      return s.elapsedMinutes;
+    } else {
+      // الجلسة نشطة → elapsed + الوقت منذ آخر resume
       final since = s.pauseStart ?? s.start;
       return s.elapsedMinutes + DateTime.now().difference(since).inMinutes;
     }
@@ -683,7 +700,7 @@ class _CashierScreenState extends State<CashierScreen>
 
       session.amountPaid = finalPrice;
 
-      final sale = Sale(
+      /*   final sale = Sale(
         id: generateId(),
         description: 'اشتراك ${currentPlan.name} للعميل ${name}' +
             (_appliedDiscount != null
@@ -716,6 +733,7 @@ class _CashierScreenState extends State<CashierScreen>
         );
         return; // توقف إذا فشل الدفع
       }
+*/
     }
 
     // حفظ الجلسة في DB
@@ -852,20 +870,20 @@ class _CashierScreenState extends State<CashierScreen>
                       );
                     }
 
-                    final sale = Sale(
-                      id: generateId(),
-                      description:
-                          'جلسة ${s.name} |   منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}',
-                      amount: paidAmount,
-                    );
-
-                    await AdminDataService.instance.addSale(
-                      sale,
-                      paymentMethod: paymentMethod,
-                      customer: _currentCustomer,
-                      updateDrawer: paymentMethod == "cash",
-                    );
-
+                    // final sale = Sale(
+                    //   id: generateId(),
+                    //   description:
+                    //       'جلسة ${s.name} |   منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}',
+                    //   amount: paidAmount,
+                    // );
+                    //
+                    // await AdminDataService.instance.addSale(
+                    //   sale,
+                    //   paymentMethod: paymentMethod,
+                    //   customer: _currentCustomer,
+                    //   updateDrawer: paymentMethod == "cash",
+                    // );
+                    //
                     try {
                       await _loadDrawerBalance();
                     } catch (e, st) {
@@ -902,11 +920,12 @@ class _CashierScreenState extends State<CashierScreen>
                         Sale(
                           id: generateId(),
                           description: 'فائض دفع العميل على الحساب',
-                          amount: diff,
+                          amount: paidAmount,
                         ),
                         paymentMethod: 'cash',
                         updateDrawer: true,
                       );
+                      await _loadDrawerBalance();
                     } /* else if (diff < 0) {
                       // خصم الفرق من الدرج
                       await AdminDataService.instance.addSale(
@@ -1003,12 +1022,19 @@ class _CashierScreenState extends State<CashierScreen>
                       amount: finalPrice,
                     );
 
-                    await AdminDataService.instance.addSale(
-                      sale,
-                      paymentMethod: paymentMethod,
-                      customer: _currentCustomer,
-                      updateDrawer: paymentMethod == "cash",
-                    );
+                    if (paidAmount > 0) {
+                      await AdminDataService.instance.addSale(
+                        Sale(
+                          id: generateId(),
+                          description:
+                              "اشتراك ${currentPlan.name} للعميل ${customer.name} علي الحساب",
+                          amount: paidAmount,
+                        ),
+                        paymentMethod: 'cash',
+                        customer: _currentCustomer,
+                        updateDrawer: true,
+                      );
+                    }
 
                     try {
                       await _loadDrawerBalance();
@@ -1106,23 +1132,6 @@ class _CashierScreenState extends State<CashierScreen>
     }
   }
 
-  void _completeAndPayForSession(Session s) async {
-    final totalMinutes = getSessionMinutes(s);
-
-    // دقائق جديدة لم تُدفع بعد
-    final minutesToCharge = (totalMinutes - s.paidMinutes).clamp(
-      0,
-      totalMinutes,
-    );
-
-    // رسوم الوقت فقط على الدقائق الجديدة
-    final timeCharge = _calculateTimeChargeFromMinutes(minutesToCharge);
-
-    final productsTotal = s.cart.fold(0.0, (sum, item) => sum + item.total);
-
-    await _showReceiptDialog(s, timeCharge, productsTotal, minutesToCharge);
-  }
-
   void _stopSession(Session s) async {
     setState(() {
       s.isActive = false;
@@ -1180,6 +1189,24 @@ class _CashierScreenState extends State<CashierScreen>
     if (plan.dailyUsageType != 'limited' || plan.dailyUsageHours == null)
       return -1;
     return plan.dailyUsageHours! * 60; // تحويل ساعات إلى دقائق
+  }
+
+  //Cart==================================
+  void _completeAndPayForSession(Session s) async {
+    final totalMinutes = getSessionMinutes(s);
+
+    // دقائق جديدة لم تُدفع بعد
+    final minutesToCharge = (totalMinutes - s.paidMinutes).clamp(
+      0,
+      totalMinutes,
+    );
+
+    // رسوم الوقت فقط على الدقائق الجديدة
+    final timeCharge = _calculateTimeChargeFromMinutes(minutesToCharge);
+
+    final productsTotal = s.cart.fold(0.0, (sum, item) => sum + item.total);
+
+    await _showReceiptDialog(s, timeCharge, productsTotal, minutesToCharge);
   }
 
   Widget _buildAddProductsAndPay(Session s, {bool onlyAdd = false}) {
@@ -1532,11 +1559,13 @@ class _CashierScreenState extends State<CashierScreen>
                   children: [
                     Text('وقت الجلسة: ${timeCharge.toStringAsFixed(2)} ج'),
                     const SizedBox(height: 8),
-                    ...s.cart.map(
-                      (item) => Text(
-                        '${item.product.name} x${item.qty} = ${item.total} ج',
-                      ),
-                    ),
+                    const SizedBox(height: 8),
+                    Text('🛒 المنتجات:'),
+                    ...s.cart.map((item) => Text(
+                        '${item.product.name} x${item.qty} = ${item.total.toStringAsFixed(2)} ج')),
+                    const Divider(),
+                    Text('⏱️ الوقت: ${timeCharge.toStringAsFixed(2)} ج'),
+                    const Divider(),
 
                     const SizedBox(height: 12),
 
@@ -1690,7 +1719,7 @@ class _CashierScreenState extends State<CashierScreen>
                       s.isActive = false;
                       s.isPaused = false;
                       _sessions.removeWhere((sess) => sess.id == s.id);
-                      _filteredSessions.removeWhere((sess) => sess.id == s.id);
+                      //   _filteredSessions.removeWhere((sess) => sess.id == s.id);
                     });
                     s.end = DateTime.now();
                     await SessionDb.updateSession(s);
@@ -1699,8 +1728,9 @@ class _CashierScreenState extends State<CashierScreen>
                     final sale = Sale(
                       id: generateId(),
                       description:
-                          'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة + منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}',
+                          'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة = ${timeCharge.toStringAsFixed(2)} ج + منتجات = ${productsTotal.toStringAsFixed(2)} ج',
                       amount: paidAmount,
+                      items: List<CartItem>.from(s.cart), // ✅ إضافة المنتجات
                     );
 
                     await AdminDataService.instance.addSale(
@@ -1815,7 +1845,7 @@ class _CashierScreenState extends State<CashierScreen>
                       s.isActive = false;
                       s.isPaused = false;
                       _sessions.removeWhere((sess) => sess.id == s.id);
-                      _filteredSessions.removeWhere((sess) => sess.id == s.id);
+                      //   _filteredSessions.removeWhere((sess) => sess.id == s.id);
                     });
                     s.end = DateTime.now();
                     await SessionDb.updateSession(s);
@@ -1824,9 +1854,12 @@ class _CashierScreenState extends State<CashierScreen>
                     final sale = Sale(
                       id: generateId(),
                       description:
-                          'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة + منتجات: ${s.cart.fold(0.0, (sum, item) => sum + item.total)}'
-                          '${appliedCode != null ? " (بكود $appliedCode)" : ""}',
+                          'جلسة ${s.name} | وقت: ${minutesToCharge} دقيقة = ${timeCharge.toStringAsFixed(2)} ج + منتجات = ${productsTotal.toStringAsFixed(2)} ج',
                       amount: paidAmount,
+                      items: List<CartItem>.from(s.cart),
+                      customerId: targetCustomerId, // 🟢 اربط الفاتورة بالعميل
+                      date: DateTime.now(),
+                      // ✅ إضافة المنتجات
                     );
 
                     await AdminDataService.instance.addSale(
@@ -1870,6 +1903,8 @@ class _CashierScreenState extends State<CashierScreen>
       },
     );
   }
+
+  ///========================================================
 
   Future<void> _showCustomerBalance(Session s, double diff) async {
     // احصل customerId
@@ -2249,7 +2284,8 @@ class _CashierScreenState extends State<CashierScreen>
                   final report = await DbHelper.instance.closeShiftDetailed(
                     shiftId.toString(),
                     countedClosingBalance: closingBalance,
-                    cashierName: _currentShift!['cashierName'] as String,
+                    cashierName: _currentShift!['cashierName'] as String ??
+                        "الموظف الحالي",
                   );
 
                   debugPrint("📄 تقرير الشيفت:\n$report");
@@ -2262,7 +2298,7 @@ class _CashierScreenState extends State<CashierScreen>
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text(
-                        "تم تقفيل الشيفت بواسطة ${report['cashierName']}",
+                        "تم تقفيل الشيفت بواسطة X SPACE",
                       ),
                     ),
                   );
@@ -2276,6 +2312,9 @@ class _CashierScreenState extends State<CashierScreen>
                 }
               },
             ),
+            IconButton(
+                onPressed: () => showCustomerSearchDialog(context),
+                icon: Icon(Icons.monetization_on_sharp)),
 
             Stack(
               children: [
@@ -2680,123 +2719,230 @@ class _CashierScreenState extends State<CashierScreen>
     );
   }
 
+  DateTime? _fromDate;
+  DateTime? _toDate;
+
+  Future<void> _pickDateRange() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      initialDateRange: _fromDate != null && _toDate != null
+          ? DateTimeRange(start: _fromDate!, end: _toDate!)
+          : null,
+    );
+
+    if (picked != null) {
+      setState(() {
+        _fromDate = picked.start;
+        _toDate = picked.end;
+      });
+    }
+  }
+
+  DateTime _selectedDate = DateTime.now();
+
   /// 🔹 دالة تبني لستة المشتركين
   Widget _buildSubscribersList({required bool withPlan}) {
     final searchText = _searchCtrl.text.toLowerCase();
     final filtered = _sessions.where((s) {
       final matchesType = withPlan ? s.type == "باقة" : s.type == "حر";
       final matchesSearch = s.name.toLowerCase().contains(searchText);
-      return matchesType && matchesSearch;
+      final matchesDate =
+          (_fromDate == null || !s.start.isBefore(_fromDate!)) &&
+              (_toDate == null || !s.start.isAfter(_toDate!));
+      return matchesType && matchesSearch && matchesDate;
     }).toList();
 
-    if (filtered.isEmpty)
-      return const Center(
-        child: Text("لا يوجد بيانات", style: TextStyle(color: Colors.white70)),
-      );
-
-    return ListView.builder(
-      itemCount: filtered.where((s) => s.isActive).length,
-      itemBuilder: (context, i) {
-        final activeSessions = filtered.where((s) => s.isActive).toList();
-        final s = activeSessions[i];
-
-        final spentMinutes = getSessionMinutes(s);
-        final endTime = getSubscriptionEnd(s);
-
-        String timeInfo2 = s.subscription != null
-            ? (endTime != null
-                ? "من: ${s.start.toLocal()} ⇢ ينتهي: ${endTime.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة"
-                : "من: ${s.start.toLocal()} ⇢ غير محدود ⇢ مضى: ${spentMinutes} دقيقة")
-            : "من: ${s.start.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة";
-
-        final hours = spentMinutes ~/ 60; // القسمة الصحيحة
-        final minutes = spentMinutes % 60; // الباقي
-
-        String timeInfo;
-        if (hours > 0) {
-          timeInfo = "$hours ساعة ${minutes} دقيقة";
-        } else {
-          timeInfo = "$minutes دقيقة";
-        }
-
-        return Card(
-          color: AppColorsDark.bgCardColor,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: BorderSide(
-              color: AppColorsDark.mainColor.withOpacity(0.4),
-              width: 1.5,
+    return Column(
+      children: [
+        Row(
+          children: [
+            const Text(
+              "عرض ليوم: ",
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ),
-          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  s.name,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+            const SizedBox(width: 8),
+            CustomButton(
+              text: _fromDate != null && _toDate != null
+                  ? "${_fromDate!.year}-${_fromDate!.month.toString().padLeft(2, '0')}-${_fromDate!.day.toString().padLeft(2, '0')} ⇢ "
+                      "${_toDate!.year}-${_toDate!.month.toString().padLeft(2, '0')}-${_toDate!.day.toString().padLeft(2, '0')}"
+                  : "اختر الفترة",
+              onPressed: () async {
+                final picked = await showDateRangePicker(
+                  context: context,
+                  firstDate: DateTime(2000),
+                  lastDate: DateTime(2100),
+                  initialDateRange: _fromDate != null && _toDate != null
+                      ? DateTimeRange(start: _fromDate!, end: _toDate!)
+                      : null,
+                );
+
+                if (picked != null) {
+                  setState(() {
+                    _fromDate = picked.start;
+                    _toDate = picked.end;
+                  });
+                }
+              },
+              infinity: false,
+              border: true,
+            ),
+            const SizedBox(width: 12),
+            CustomButton(
+              text: "اليوم",
+              onPressed: () => setState(() {
+                final today = DateTime.now();
+                _fromDate = DateTime(today.year, today.month, today.day);
+                _toDate =
+                    DateTime(today.year, today.month, today.day, 23, 59, 59);
+              }),
+              infinity: false,
+              border: true,
+            ),
+            const SizedBox(width: 12),
+            CustomButton(
+              text: "الكل",
+              onPressed: () => setState(() {
+                _fromDate = null;
+                _toDate = null;
+                _searchCtrl.clear(); // 🟢 امسح البحث كمان
+              }),
+              infinity: false,
+              border: true,
+            ),
+          ],
+        ),
+        SizedBox(
+          height: 10,
+        ),
+        Expanded(
+          child: ListView.builder(
+            /*where((s) => s.isActive)*/
+            itemCount: filtered.length,
+            itemBuilder: (context, i) {
+              /*   final activeSessions = filtered.where((s) => s.isActive).toList();
+           */
+              /*   final s = activeSessions[i];*/
+              final s = filtered[i];
+              final spentMinutes = getSessionMinutes(s);
+              final endTime = getSubscriptionEnd(s);
+
+              String timeInfo2 = s.subscription != null
+                  ? (endTime != null
+                      ? "من: ${s.start.toLocal()} ⇢ ينتهي: ${endTime.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة"
+                      : "من: ${s.start.toLocal()} ⇢ غير محدود ⇢ مضى: ${spentMinutes} دقيقة")
+                  : "من: ${s.start.toLocal()} ⇢ مضى: ${spentMinutes} دقيقة";
+
+              final hours = spentMinutes ~/ 60; // القسمة الصحيحة
+              final minutes = spentMinutes % 60; // الباقي
+
+              String timeInfo;
+              if (hours > 0) {
+                timeInfo = "$hours ساعة ${minutes} دقيقة";
+              } else {
+                timeInfo = "$minutes دقيقة";
+              }
+
+              return Card(
+                color: AppColorsDark.bgCardColor,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  side: BorderSide(
+                    color: AppColorsDark.mainColor.withOpacity(0.4),
+                    width: 1.5,
                   ),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  '${s.isActive ? (s.isPaused ? "متوقف مؤقت" : " نشط منذ ") : "انتهت"} - $timeInfo',
-                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        s.name,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        s.isActive
+                            ? (s.isPaused
+                                ? "متوقف مؤقت - $timeInfo"
+                                : "نشط منذ - $timeInfo")
+                            : "انتهت",
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 13),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          s.isActive
+                              ? Expanded(
+                                  child: CustomButton(
+                                    text: 'اضف منتجات',
+                                    onPressed: () async {
+                                      setState(() => _selectedSession = s);
+                                      await showModalBottomSheet(
+                                        context: context,
+                                        isScrollControlled: true,
+                                        builder: (_) => _buildAddProductsAndPay(
+                                          s,
+                                          onlyAdd: true,
+                                        ), // parameter جديد
+                                      );
+                                    },
+                                  ),
+                                )
+                              : Container(),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: CustomButton(
+                              color: s.isPaused
+                                  ? Colors.transparent
+                                  : AppColorsDark.mainColor,
+                              border: s.isPaused ? false : true,
+                              borderColor: s.isActive ? null : Colors.white,
+                              text: s.isPaused
+                                  ? 'استكمال الوقت'
+                                  : s.isActive
+                                      ? 'ايقاف مؤقت'
+                                      : 'انتهت',
+                              onPressed: s.isActive || s.isPaused
+                                  ? () => _togglePauseSessionFor(s)
+                                  : null,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          s.isActive
+                              ? Expanded(
+                                  child: CustomButton(
+                                    border: true,
+                                    borderColor: Colors.red,
+                                    text: 'دفع',
+                                    onPressed: () async {
+                                      _completeAndPayForSession(s);
+                                    },
+                                    color: Colors.red,
+                                  ),
+                                )
+                              : Container(),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: CustomButton(
-                        text: 'اضف منتجات',
-                        onPressed: () async {
-                          setState(() => _selectedSession = s);
-                          await showModalBottomSheet(
-                            context: context,
-                            isScrollControlled: true,
-                            builder: (_) => _buildAddProductsAndPay(
-                              s,
-                              onlyAdd: true,
-                            ), // parameter جديد
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: CustomButton(
-                        color: s.isPaused
-                            ? Colors.transparent
-                            : AppColorsDark.mainColor,
-                        border: s.isPaused ? false : true,
-                        text: s.isPaused ? 'استكمال الوقت' : 'ايقاف مؤقت',
-                        onPressed:
-                            s.isActive ? () => _togglePauseSessionFor(s) : null,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: CustomButton(
-                        border: true,
-                        borderColor: Colors.red,
-                        text: 'دفع',
-                        onPressed: () async {
-                          _completeAndPayForSession(s);
-                        },
-                        color: Colors.red,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+              );
+            },
           ),
-        );
-      },
+        ),
+      ],
     );
   }
 

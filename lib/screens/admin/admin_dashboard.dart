@@ -5,11 +5,13 @@ import 'package:workspace/screens/admin/sales_page.dart';
 import 'package:workspace/screens/admin/subscriptions_page.dart';
 import 'package:workspace/screens/admin/CustomersBalancesPage.dart';
 import 'package:workspace/widget/buttom.dart';
+import 'package:workspace/widget/form.dart';
 import 'dart:math';
 import '../../core/db_helper_Subscribe.dart';
 import '../../core/data_service.dart';
 import '../../core/models.dart';
 import '../../utils/colors.dart';
+import 'CustomerCreditPage.dart';
 import 'CustomerSubscribe.dart';
 import 'MAin_dashboard.dart';
 import 'discounts_page.dart';
@@ -129,6 +131,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
           MaterialPageRoute(builder: (_) => SalesPage()),
         ),
       ),
+      /* _AdminCardData(
+        'الفواتير الاجله',
+        Icons.receipt_long,
+        () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => CustomerCreditPage()),
+        ),
+      ),*/
       /*  _AdminCardData(
         'الفواتير الاجله',
         Icons.pending_actions,
@@ -245,6 +255,116 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 );
               }
             },
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.lock), // أيقونة القفل
+            onSelected: (value) async {
+              if (value == 'admin') {
+                // تغيير باسورد الأدمن
+                final oldController = TextEditingController();
+                final newController = TextEditingController();
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text("تغيير باسورد الأدمن"),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CustomFormField(
+                          hint: "الباسورد القديم",
+                          controller: oldController,
+                          isPassword: true,
+                        ),
+                        SizedBox(
+                          height: 10,
+                        ),
+                        CustomFormField(
+                          hint: "الباسورد الجديد",
+                          controller: newController,
+                          isPassword: true,
+                        )
+                      ],
+                    ),
+                    actions: [
+                      CustomButton(
+                        text: "إلغاء",
+                        onPressed: () => Navigator.pop(context, false),
+                        border: true,
+                        infinity: false,
+                      ),
+                      CustomButton(
+                        text: "حفظ",
+                        onPressed: () => Navigator.pop(context, true),
+                        infinity: false,
+                      ),
+                    ],
+                  ),
+                );
+
+                if (ok == true) {
+                  final success =
+                      await AdminDataService.instance.updateAdminPassword(
+                    oldController.text,
+                    newController.text,
+                  );
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(success
+                          ? "تم تغيير باسورد الأدمن ✅"
+                          : "الباسورد القديم غير صحيح"),
+                    ),
+                  );
+                }
+              } else if (value == 'cashier') {
+                // تغيير باسورد الكاشير
+                final newController = TextEditingController();
+                final newPass = await showDialog<String>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text("تغيير باسورد الكاشير"),
+                    content: CustomFormField(
+                      hint: "الباسورد الجديد",
+                      controller: newController,
+                      isPassword: true,
+                    ),
+                    actions: [
+                      CustomButton(
+                        text: "إلغاء",
+                        onPressed: () => Navigator.pop(context),
+                        infinity: false,
+                        border: true,
+                      ),
+                      CustomButton(
+                        text: "حفظ",
+                        onPressed: () =>
+                            Navigator.pop(context, newController.text.trim()),
+                        infinity: false,
+                      ),
+                    ],
+                  ),
+                );
+
+                if (newPass != null && newPass.isNotEmpty) {
+                  await AdminDataService.instance
+                      .updateCashierPassword(newPass);
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("تم تغيير باسورد الكاشير ✅")),
+                  );
+                }
+              }
+            },
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(
+                value: 'admin',
+                child: Text("تغيير باسورد الأدمن"),
+              ),
+              const PopupMenuItem(
+                value: 'cashier',
+                child: Text("تغيير باسورد الكاشير"),
+              ),
+            ],
           ),
           IconButton(
             icon: const Icon(Icons.refresh),

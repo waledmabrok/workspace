@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart';
 
+import 'data_service.dart';
 import 'db_helper_shifts.dart';
 
 class DbHelper {
@@ -19,14 +20,15 @@ class DbHelper {
     final databaseFactory = databaseFactoryFfi;
 
     final dbPath = await databaseFactory.getDatabasesPath();
-    final path = join(dbPath, 'workspace25.db');
+    final path = join(dbPath, 'workspace39.db');
 
     _database = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 11,
-        onCreate: _onCreate,
+        version: 2, // ✨ زوّد رقم الـ version
 
+        onUpgrade: _onUpgrade,
+        onCreate: _onCreate,
         onOpen: (db) async {
           await _ensureSalesColumns(db);
           await _ensureFinanceTables(db);
@@ -42,11 +44,63 @@ class DbHelper {
           await migrateCashiers(db);
           await ensureCashierIdColumn(db);
           await _ensureExpensesColumns(db);
+          await _ensureCartItemsColumns(db);
         },
       ),
     );
 
     return _database!;
+  }
+
+  Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // ✨ هنا ضيف الأعمدة الجديدة لو الجدول قديم
+      await db.execute("ALTER TABLE cart_items ADD COLUMN productName TEXT");
+      await db.execute("ALTER TABLE cart_items ADD COLUMN productPrice REAL");
+
+      await migrateCartItems(db);
+    }
+  }
+
+  Future<void> migrateCartItems(Database db) async {
+    final items = await db.query('cart_items');
+
+    for (var item in items) {
+      final productId = item['productId'].toString();
+
+      // لو العمود ناقص أو فاضي
+      if (item['productName'] == null || item['productPrice'] == null) {
+        try {
+          final product = AdminDataService.instance.products.firstWhere(
+            (p) => p.id.toString() == productId,
+          );
+
+          await db.update(
+            'cart_items',
+            {
+              'productName': product.name,
+              'productPrice': product.price,
+            },
+            where: 'id = ?',
+            whereArgs: [item['id']],
+          );
+        } catch (e) {
+          // المنتج مش موجود في AdminDataService → تجاهل
+        }
+      }
+    }
+  }
+
+  Future<void> _ensureCartItemsColumns(Database db) async {
+    final cols = await db.rawQuery('PRAGMA table_info(cart_items)');
+    final colNames = cols.map((c) => c['name'] as String).toList();
+
+    if (!colNames.contains('productName')) {
+      await db.execute('ALTER TABLE cart_items ADD COLUMN productName TEXT');
+    }
+    if (!colNames.contains('productPrice')) {
+      await db.execute('ALTER TABLE cart_items ADD COLUMN productPrice REAL');
+    }
   }
 
   Future<void> ensureCashierIdColumn(Database db) async {
@@ -321,10 +375,20 @@ CREATE TABLE IF NOT EXISTS cashiers (
         id TEXT PRIMARY KEY,
         sessionId TEXT,
         productId TEXT,
+        productName TEXT,
+        productPrice REAL,
         qty INTEGER
       )
     ''');
-
+    //فواتير
+    await db.execute('''
+      CREATE TABLE receipts(
+        id TEXT PRIMARY KEY,
+        sessionId TEXT,
+        date TEXT,
+        itemsJson TEXT
+      )
+    ''');
     // الغرفه
     await db.execute('''
       CREATE TABLE  rooms (
@@ -360,6 +424,9 @@ dailyCapRoom REAL
   startTime INTEGER,
   endTime INTEGER, -- هيفضل NULL لحد ما يقفل الكاشير الحجز
   price REAL,
+  isPaused INTEGER DEFAULT 0,
+  pauseTime INTEGER,
+  totalPausedDuration INTEGER DEFAULT 0,
   status TEXT DEFAULT 'open', -- open / closed
   FOREIGN KEY(roomId) REFERENCES rooms(id)
 );
@@ -483,6 +550,13 @@ dailyCapRoom REAL
     createdAt INTEGER
   )
 ''');
+    //=======password=================
+    await db.execute('''CREATE TABLE app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+
+''');
 
     await db.insert("pricing_settings", {
       'id': 1,
@@ -503,28 +577,28 @@ dailyCapRoom REAL
 
   // ---------------- أدوات مساعدة ----------------
   Future<void> _ensureSalesColumns(Database db) async {
-    try {
-      final cols = await db.rawQuery('PRAGMA table_info(sales)');
-      final colNames = cols.map((c) => c['name'] as String).toList();
+    final cols = await db.rawQuery('PRAGMA table_info(sales)');
+    final colNames = cols.map((c) => c['name'] as String).toList();
 
-      if (!colNames.contains('discount')) {
-        await db.execute(
-          'ALTER TABLE sales ADD COLUMN discount REAL DEFAULT 0.0',
-        );
-      }
-      if (!colNames.contains('shiftId')) {
-        await db.execute('ALTER TABLE sales ADD COLUMN shiftId TEXT');
-      }
-      if (!colNames.contains('paymentMethod')) {
-        await db.execute('ALTER TABLE sales ADD COLUMN paymentMethod TEXT');
-      }
-      if (!colNames.contains('customerId')) {
-        await db.execute('ALTER TABLE sales ADD COLUMN customerId TEXT');
-      }
-      if (!colNames.contains('customerName')) {
-        await db.execute('ALTER TABLE sales ADD COLUMN customerName TEXT');
-      }
-    } catch (_) {}
+    if (!colNames.contains('discount')) {
+      await db
+          .execute('ALTER TABLE sales ADD COLUMN discount REAL DEFAULT 0.0');
+    }
+    if (!colNames.contains('shiftId')) {
+      await db.execute('ALTER TABLE sales ADD COLUMN shiftId TEXT');
+    }
+    if (!colNames.contains('paymentMethod')) {
+      await db.execute('ALTER TABLE sales ADD COLUMN paymentMethod TEXT');
+    }
+    if (!colNames.contains('customerId')) {
+      await db.execute('ALTER TABLE sales ADD COLUMN customerId TEXT');
+    }
+    if (!colNames.contains('customerName')) {
+      await db.execute('ALTER TABLE sales ADD COLUMN customerName TEXT');
+    }
+    if (!colNames.contains('itemsJson')) {
+      await db.execute('ALTER TABLE sales ADD COLUMN itemsJson TEXT');
+    }
   }
 
   Future<void> _ensureSessionsColumns(Database db) async {
@@ -868,8 +942,7 @@ dailyCapRoom REAL
     final db = await instance.database;
 
     // المبيعات
-    final sales =
-        Sqflite.firstIntValue(
+    final sales = Sqflite.firstIntValue(
           await db.rawQuery(
             "SELECT SUM(COALESCE(amount,0) - COALESCE(discount,0)) "
             "FROM sales WHERE shiftId = ?",
@@ -880,8 +953,7 @@ dailyCapRoom REAL
 
     // المصروفات
     // لو هتربط بالشيفت، لازم تضيف shiftId في جدول expenses أولًا
-    final expenses =
-        Sqflite.firstIntValue(
+    final expenses = Sqflite.firstIntValue(
           await db.rawQuery(
             "SELECT SUM(COALESCE(amount,0)) FROM expenses WHERE shiftId = ?",
             [shiftId],
@@ -898,10 +970,9 @@ dailyCapRoom REAL
       limit: 1,
     );
 
-    final openingBalance =
-        result.isNotEmpty
-            ? (result.first["openingBalance"] as num?)?.toDouble() ?? 0.0
-            : 0.0;
+    final openingBalance = result.isNotEmpty
+        ? (result.first["openingBalance"] as num?)?.toDouble() ?? 0.0
+        : 0.0;
 
     return {
       "sales": sales.toDouble(),
@@ -1094,8 +1165,7 @@ dailyCapRoom REAL
           deposits += total;
         else if (type == 'withdraw')
           withdrawals += total;
-        else if (type == 'sale')
-          txSales += total;
+        else if (type == 'sale') txSales += total;
       }
 
       // 5) opening balance
@@ -1175,5 +1245,29 @@ dailyCapRoom REAL
     );
     if (result.isEmpty) return null;
     return result.first;
+  }
+
+  //password=================================
+  Future<void> setSetting(String key, String value) async {
+    final db = await instance.database;
+    await db.insert(
+      'app_settings',
+      {'key': key, 'value': value},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> getSetting(String key) async {
+    final db = await instance.database;
+    final maps = await db.query(
+      'app_settings',
+      where: 'key = ?',
+      whereArgs: [key],
+      limit: 1,
+    );
+    if (maps.isNotEmpty) {
+      return maps.first['value'] as String?;
+    }
+    return null;
   }
 }

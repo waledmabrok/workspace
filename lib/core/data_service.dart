@@ -1,117 +1,3 @@
-/*
-import 'db_helper_discounts.dart';
-import 'db_helper_main_time.dart';
-import 'FinanceDb.dart';
-import 'models.dart';
-
-class AdminDataService {
-  AdminDataService._();
-  static final AdminDataService instance = AdminDataService._();
-
-  // 👤 الباسوردات
-  String adminPassword = "1234";
-  String cashierPassword = "0000";
-
-  // 📦 البيانات الحية في الذاكرة
-  final List<SubscriptionPlan> subscriptions = [];
-  final List<Product> products = [];
-  List<Expense> expenses = [];
-  List<Sale> sales = [];
-  final List<Discount> discounts = [];
-
-  // ⚙️ إعدادات التسعير
-  late PricingSettings pricingSettings;
-
-  // ------------------- Init -------------------
-  Future<void> init() async {
-    pricingSettings = await PricingDb.loadSettings();
-
-    // تحميل البيانات من قاعدة البيانات
-    expenses = await FinanceDb.getExpenses();
-    sales = await FinanceDb.getSales();
-    discounts.clear();
-    discounts.addAll(await DiscountDb.getAll()); // 🟢 تحميل الخصومات
-  }
-
-  // ------------------- تحديث الباسوردات -------------------
-  void updateAdminPassword(String newPassword) {
-    adminPassword = newPassword;
-  }
-
-  void updateCashierPassword(String newPassword) {
-    cashierPassword = newPassword;
-  }
-
-  // ------------------- CRUD للاشتراكات -------------------
-  void addSubscription(SubscriptionPlan plan) => subscriptions.add(plan);
-
-  void updateSubscription(SubscriptionPlan plan) {
-    final index = subscriptions.indexWhere((s) => s.id == plan.id);
-    if (index != -1) subscriptions[index] = plan;
-  }
-
-  void deleteSubscription(String id) =>
-      subscriptions.removeWhere((s) => s.id == id);
-
-  // ------------------- CRUD للمنتجات -------------------
-  void addProduct(Product p) => products.add(p);
-
-  void updateProduct(Product p) {
-    final index = products.indexWhere((prod) => prod.id == p.id);
-    if (index != -1) products[index] = p;
-  }
-
-  void deleteProduct(String id) => products.removeWhere((p) => p.id == id);
-
-  // ------------------- المبيعات والمصاريف -------------------
-  Future<void> addExpense(Expense e) async {
-    await FinanceDb.insertExpense(e);
-    expenses.add(e);
-  }
-
-  Future<void> addSale(Sale s) async {
-    await FinanceDb.insertSale(s);
-    sales.add(s);
-  }
-
-  // ------------------- الخصومات -------------------
-  Future<void> addDiscount(Discount d) async {
-    await DiscountDb.insert(d);
-    discounts.add(d);
-  }
-
-  Future<void> updateDiscount(Discount d) async {
-    await DiscountDb.update(d);
-    final index = discounts.indexWhere((x) => x.id == d.id);
-    if (index != -1) discounts[index] = d;
-  }
-
-  Future<void> deleteDiscount(String id) async {
-    await DiscountDb.delete(id);
-    discounts.removeWhere((d) => d.id == id);
-  }
-
-  // ------------------- الإحصائيات -------------------
-  double get totalSales => sales.fold(0.0, (p, e) => p + e.amount);
-  double get totalExpenses => expenses.fold(0.0, (p, e) => p + e.amount);
-  double get profit => totalSales - totalExpenses;
-}
-
-// ⚙️ إعدادات التسعير
-class PricingSettings {
-  final int firstFreeMinutes;
-  final double firstHourFee;
-  final double perHourAfterFirst;
-  final double dailyCap;
-
-  PricingSettings({
-    required this.firstFreeMinutes,
-    required this.firstHourFee,
-    required this.perHourAfterFirst,
-    required this.dailyCap,
-  });
-}
-*/
 import 'dart:convert';
 
 import 'Db_helper.dart';
@@ -124,9 +10,6 @@ class AdminDataService {
   AdminDataService._();
   static final AdminDataService instance = AdminDataService._();
 
-  // 👤 الباسوردات
-  String adminPassword = "1234";
-  String cashierPassword = "0000";
   int? currentShiftId;
 
   // 📦 البيانات الحية في الذاكرة
@@ -256,7 +139,7 @@ class AdminDataService {
   // ------------------- Init -------------------
   Future<void> init() async {
     pricingSettings = await PricingDb.loadSettings();
-
+    await loadPasswords();
     // تحميل البيانات من قاعدة البيانات
     expenses = await FinanceDb.getExpenses();
     sales = await FinanceDb.getSales();
@@ -381,12 +264,34 @@ class AdminDataService {
   }
 
   // ------------------- تحديث الباسوردات -------------------
-  void updateAdminPassword(String newPassword) {
-    adminPassword = newPassword;
+  String adminPassword = "1234";
+  String cashierPassword = "0000";
+
+  Future<void> loadPasswords() async {
+    adminPassword =
+        await DbHelper.instance.getSetting("adminPassword") ?? "1234";
+    cashierPassword =
+        await DbHelper.instance.getSetting("cashierPassword") ?? "0000";
   }
 
-  void updateCashierPassword(String newPassword) {
-    cashierPassword = newPassword;
+  /// تغيير باسورد الأدمن مباشرة
+  /// تغيير باسورد الأدمن مباشرة
+  Future<bool> updateAdminPassword(
+      String oldPassword, String newPassword) async {
+    if (adminPassword == oldPassword) {
+      adminPassword = newPassword; // ✅ تحديث فوري في الذاكرة
+      await DbHelper.instance
+          .setSetting("adminPassword", newPassword); // ✅ تحديث في DB
+      return true;
+    }
+    return false; // ❌ الباسورد القديم غير صحيح
+  }
+
+  /// تغيير باسورد الكاشير (يتحقق من القديم)
+  Future<void> updateCashierPassword(String newPassword) async {
+    cashierPassword = newPassword; // ✅ تحديث في الذاكرة
+    await DbHelper.instance
+        .setSetting("cashierPassword", newPassword); // ✅ حفظ في DB
   }
 
   // ------------------- CRUD للاشتراكات -------------------

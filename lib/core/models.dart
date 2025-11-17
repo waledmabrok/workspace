@@ -34,17 +34,17 @@ class SubscriptionPlan {
 
   /// ✅ للتخزين في SQLite
   Map<String, dynamic> toMap() => {
-    'id': id,
-    'name': name,
-    'durationType': durationType,
-    'durationValue': durationValue,
-    'price': price,
-    'dailyUsageType': dailyUsageType,
-    'dailyUsageHours': dailyUsageHours,
-    'weeklyHours': weeklyHours != null ? jsonEncode(weeklyHours) : null,
-    'isUnlimited': isUnlimited ? 1 : 0,
-    'endDate': endDate?.millisecondsSinceEpoch, // ✅ جديد
-  };
+        'id': id,
+        'name': name,
+        'durationType': durationType,
+        'durationValue': durationValue,
+        'price': price,
+        'dailyUsageType': dailyUsageType,
+        'dailyUsageHours': dailyUsageHours,
+        'weeklyHours': weeklyHours != null ? jsonEncode(weeklyHours) : null,
+        'isUnlimited': isUnlimited ? 1 : 0,
+        'endDate': endDate?.millisecondsSinceEpoch, // ✅ جديد
+      };
 
   factory SubscriptionPlan.fromMap(Map<String, dynamic> map) =>
       SubscriptionPlan(
@@ -55,30 +55,28 @@ class SubscriptionPlan {
         price: (map['price'] as num).toDouble(),
         dailyUsageType: map['dailyUsageType'] ?? "full",
         dailyUsageHours: map['dailyUsageHours'],
-        weeklyHours:
-            map['weeklyHours'] != null
-                ? Map<String, int>.from(jsonDecode(map['weeklyHours']))
-                : null,
+        weeklyHours: map['weeklyHours'] != null
+            ? Map<String, int>.from(jsonDecode(map['weeklyHours']))
+            : null,
         isUnlimited: map['isUnlimited'] == 1,
-        endDate:
-            map['endDate'] != null
-                ? DateTime.fromMillisecondsSinceEpoch(map['endDate'])
-                : null, // ✅ جديد
+        endDate: map['endDate'] != null
+            ? DateTime.fromMillisecondsSinceEpoch(map['endDate'])
+            : null, // ✅ جديد
       );
 
   /// ✅ للتخزين في SharedPreferences (jsonEncode/jsonDecode)
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'durationType': durationType,
-    'durationValue': durationValue,
-    'price': price,
-    'dailyUsageType': dailyUsageType,
-    'dailyUsageHours': dailyUsageHours,
-    'weeklyHours': weeklyHours,
-    'isUnlimited': isUnlimited,
-    'endDate': endDate?.toIso8601String(), // ✅ جديد
-  };
+        'id': id,
+        'name': name,
+        'durationType': durationType,
+        'durationValue': durationValue,
+        'price': price,
+        'dailyUsageType': dailyUsageType,
+        'dailyUsageHours': dailyUsageHours,
+        'weeklyHours': weeklyHours,
+        'isUnlimited': isUnlimited,
+        'endDate': endDate?.toIso8601String(), // ✅ جديد
+      };
 
   factory SubscriptionPlan.fromJson(Map<String, dynamic> json) =>
       SubscriptionPlan(
@@ -89,18 +87,17 @@ class SubscriptionPlan {
         price: (json['price'] as num).toDouble(),
         dailyUsageType: json['dailyUsageType'] ?? "full",
         dailyUsageHours: json['dailyUsageHours'],
-        weeklyHours:
-            json['weeklyHours'] != null
-                ? Map<String, int>.from(json['weeklyHours'])
-                : null,
+        weeklyHours: json['weeklyHours'] != null
+            ? Map<String, int>.from(json['weeklyHours'])
+            : null,
         isUnlimited: json['isUnlimited'] ?? false,
-        endDate:
-            json['endDate'] != null
-                ? DateTime.parse(json['endDate'])
-                : null, // ✅ جديد
+        endDate: json['endDate'] != null
+            ? DateTime.parse(json['endDate'])
+            : null, // ✅ جديد
       );
 }
 
+/// ---------------- Product ----------------
 /// ---------------- Product ----------------
 class Product {
   final String id;
@@ -115,35 +112,83 @@ class Product {
     required this.stock,
   });
 
+  /// ✅ deep copy
+  Product copy() => Product(
+        id: id,
+        name: name,
+        price: price,
+        stock: stock,
+      );
+
   /// ✅ للتخزين في SharedPreferences
   Map<String, dynamic> toJson() => {
-    "id": id,
-    "name": name,
-    "price": price,
-    "stock": stock,
-  };
+        "id": id,
+        "name": name,
+        "price": price,
+        "stock": stock,
+      };
 
   factory Product.fromJson(Map<String, dynamic> json) => Product(
-    id: json["id"],
-    name: json["name"],
-    price: (json["price"] as num).toDouble(),
-    stock: json["stock"],
-  );
+        id: json["id"],
+        name: json["name"],
+        price: (json["price"] as num).toDouble(),
+        stock: json["stock"],
+      );
 
   /// ✅ للتخزين في SQLite
   Map<String, dynamic> toMap() => {
-    "id": id,
-    "name": name,
-    "price": price,
-    "stock": stock,
-  };
+        "id": id,
+        "name": name,
+        "price": price,
+        "stock": stock,
+      };
 
   factory Product.fromMap(Map<String, dynamic> map) => Product(
-    id: map["id"],
-    name: map["name"],
-    price: (map["price"] as num).toDouble(),
-    stock: map["stock"],
-  );
+        id: map["id"],
+        name: map["name"],
+        price: (map["price"] as num).toDouble(),
+        stock: map["stock"],
+      );
+}
+
+/// ---------------- CartItem ----------------
+class CartItem {
+  final String id;
+  final Product product;
+  int qty;
+
+  CartItem({
+    required this.id,
+    required this.product,
+    required this.qty,
+  });
+
+  double get total => product.price * qty;
+
+  /// ✅ deep copy
+  CartItem copy() => CartItem(
+        id: id,
+        product: product.copy(),
+        qty: qty,
+      );
+
+  /// ✅ لتحويل CartItem إلى JSON
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'product': product.toJson(), // لازم يكون Product فيه toJson
+      'qty': qty,
+    };
+  }
+
+  /// ✅ إنشاء CartItem من JSON
+  factory CartItem.fromJson(Map<String, dynamic> json) {
+    return CartItem(
+      id: json['id'] as String,
+      product: Product.fromJson(json['product']),
+      qty: json['qty'] as int,
+    );
+  }
 }
 
 ///=========================Shif=============
@@ -170,26 +215,27 @@ class Shift {
   });
 
   Map<String, dynamic> toMap() => {
-    "id": id,
-    "cashierName": cashierName,
-    "openedAt": openedAt.toIso8601String(),
-    "closedAt": closedAt?.toIso8601String(),
-    "openingBalance": openingBalance,
-    "closingBalance": closingBalance,
-    "totalSales": totalSales,
-    "totalExpenses": totalExpenses,
-  };
+        "id": id,
+        "cashierName": cashierName,
+        "openedAt": openedAt.toIso8601String(),
+        "closedAt": closedAt?.toIso8601String(),
+        "openingBalance": openingBalance,
+        "closingBalance": closingBalance,
+        "totalSales": totalSales,
+        "totalExpenses": totalExpenses,
+      };
 
   factory Shift.fromMap(Map<String, dynamic> map) => Shift(
-    id: map["id"],
-    cashierName: map["cashierName"],
-    openedAt: DateTime.parse(map["openedAt"]),
-    closedAt: map["closedAt"] != null ? DateTime.parse(map["closedAt"]) : null,
-    openingBalance: map["openingBalance"] ?? 0.0,
-    closingBalance: map["closingBalance"] ?? 0.0,
-    totalSales: map["totalSales"] ?? 0.0,
-    totalExpenses: map["totalExpenses"] ?? 0.0,
-  );
+        id: map["id"],
+        cashierName: map["cashierName"],
+        openedAt: DateTime.parse(map["openedAt"]),
+        closedAt:
+            map["closedAt"] != null ? DateTime.parse(map["closedAt"]) : null,
+        openingBalance: map["openingBalance"] ?? 0.0,
+        closingBalance: map["closingBalance"] ?? 0.0,
+        totalSales: map["totalSales"] ?? 0.0,
+        totalExpenses: map["totalExpenses"] ?? 0.0,
+      );
 }
 
 /// ---------------- Expense ----------------
@@ -214,10 +260,12 @@ class Sale {
   double discount;
   DateTime date;
   String? shiftId;
+
   // حقول إضافية للتوافق مع DB وأغراض التقارير
   String paymentMethod; // 'cash' | 'wallet' | 'balance' | ...
   String? customerId;
   String? customerName;
+  List<CartItem> items; // ✅ إضافة المنتجات المرتبطة بالبيع
 
   Sale({
     required this.id,
@@ -229,6 +277,7 @@ class Sale {
     this.customerId,
     this.customerName,
     this.shiftId,
+    this.items = const [],
   }) : date = date ?? DateTime.now();
 
   Map<String, dynamic> toMap() {
@@ -242,23 +291,41 @@ class Sale {
       'customerId': customerId,
       'customerName': customerName,
       'shiftId': shiftId,
+      'items': jsonEncode(items
+          .map((e) => {
+                'id': e.id,
+                'product': e.product.toJson(),
+                'qty': e.qty,
+              })
+          .toList()),
     };
   }
 
   factory Sale.fromMap(Map<String, dynamic> map) {
+    List<CartItem> cartItems = [];
+    if (map['items'] != null) {
+      final decoded = jsonDecode(map['items']);
+      cartItems = List<Map<String, dynamic>>.from(decoded)
+          .map((e) => CartItem(
+                id: e['id'],
+                product: Product.fromJson(e['product']),
+                qty: e['qty'],
+              ))
+          .toList();
+    }
     return Sale(
       id: map['id'] as String,
       description: map['description'] as String? ?? '',
       amount: (map['amount'] as num?)?.toDouble() ?? 0.0,
       discount: (map['discount'] as num?)?.toDouble() ?? 0.0,
-      date:
-          map['date'] != null
-              ? DateTime.fromMillisecondsSinceEpoch(map['date'] as int)
-              : DateTime.now(),
+      date: map['date'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['date'] as int)
+          : DateTime.now(),
       paymentMethod: map['paymentMethod'] as String? ?? 'cash',
       customerId: map['customerId'] as String?,
       customerName: map['customerName'] as String?,
       shiftId: map['shiftId'] as String?,
+      items: cartItems,
     );
   }
 }
@@ -392,7 +459,9 @@ class Session {
   final String name;
   int? savedDailySpent; // الدقايق المستهلكة اليوم
   int? savedElapsedMinutes; // اجمالي الدقايق المستهلكة
-
+  List<CartItem> cartCopy = [];
+  List<Map<String, dynamic>> receipts = [];
+  DateTime? lastRenewed;
   DateTime start;
   DateTime? end;
   double amountPaid;
@@ -458,7 +527,7 @@ class Session {
 
   Map<String, dynamic> toMap() {
     return {
-      'id': id,
+      'id': id, // بدل استخدام DateTime.now()
       'name': name,
       'start': start.millisecondsSinceEpoch,
       'end': end?.millisecondsSinceEpoch,
@@ -477,7 +546,8 @@ class Session {
       'savedSubscriptionJson': savedSubscriptionJson,
       'resumeNextDayRequested': resumeNextDayRequested == true ? 1 : 0,
       'resumeDate': resumeDate?.millisecondsSinceEpoch,
-      'savedSubscriptionEnd': savedSubscriptionEnd?.toIso8601String(),
+      'savedSubscriptionEnd': savedSubscriptionEnd?.millisecondsSinceEpoch,
+
       'savedSubscriptionConvertedAt':
           savedSubscriptionConvertedAt?.millisecondsSinceEpoch,
       'runningSince': runningSince?.millisecondsSinceEpoch,
@@ -503,10 +573,9 @@ class Session {
       id: map['id'] as String,
       name: map['name'] as String,
       start: DateTime.fromMillisecondsSinceEpoch(map['start'] as int),
-      end:
-          map['end'] != null
-              ? DateTime.fromMillisecondsSinceEpoch(map['end'] as int)
-              : null,
+      end: map['end'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['end'] as int)
+          : null,
       amountPaid: (map['amountPaid'] as num?)?.toDouble() ?? 0.0,
       subscription: plan,
       isActive: (map['isActive'] as int?) == 1,
@@ -516,33 +585,41 @@ class Session {
       elapsedMinutesPayg: map['elapsedMinutesPayg'] as int? ?? 0, // جديد
       cart: [],
       type: map['type'] as String? ?? (plan != null ? "باقة" : "حر"),
-      pauseStart:
-          map['pauseStart'] != null
-              ? DateTime.fromMillisecondsSinceEpoch(map['pauseStart'] as int)
-              : null,
+      pauseStart: map['pauseStart'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['pauseStart'] as int)
+          : null,
       paidMinutes: map['paidMinutes'] as int? ?? 0,
       customerId: map['customerId'] as String?,
       events: parsedEvents,
       savedSubscriptionJson: map['savedSubscriptionJson'] as String?,
       resumeNextDayRequested: (map['resumeNextDayRequested'] as int?) == 1,
-      resumeDate:
-          map['resumeDate'] != null
-              ? DateTime.fromMillisecondsSinceEpoch(map['resumeDate'] as int)
-              : null,
-      savedSubscriptionEnd:
-          map['savedSubscriptionEnd'] != null
-              ? DateTime.parse(map['savedSubscriptionEnd'] as String)
-              : null,
-      savedSubscriptionConvertedAt:
-          map['savedSubscriptionConvertedAt'] != null
+      resumeDate: map['resumeDate'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['resumeDate'] as int)
+          : null,
+      savedSubscriptionEnd: map['savedSubscriptionEnd'] != null
+          ? (map['savedSubscriptionEnd'] is String
               ? DateTime.fromMillisecondsSinceEpoch(
-                map['savedSubscriptionConvertedAt'] as int,
-              )
-              : null,
-      runningSince:
-          map['runningSince'] != null
-              ? DateTime.fromMillisecondsSinceEpoch(map['runningSince'] as int)
-              : null,
+                  int.parse(map['savedSubscriptionEnd']))
+              : DateTime.fromMillisecondsSinceEpoch(
+                  (map['savedSubscriptionEnd'] as num).toInt()))
+          : null,
+
+      savedSubscriptionConvertedAt: map['savedSubscriptionConvertedAt'] != null
+          ? (map['savedSubscriptionConvertedAt'] is String
+              ? DateTime.fromMillisecondsSinceEpoch(
+                  int.parse(map['savedSubscriptionConvertedAt']))
+              : DateTime.fromMillisecondsSinceEpoch(
+                  (map['savedSubscriptionConvertedAt'] as num).toInt()))
+          : null,
+
+      runningSince: map['runningSince'] != null
+          ? (map['runningSince'] is String
+              ? DateTime.fromMillisecondsSinceEpoch(
+                  int.parse(map['runningSince']))
+              : DateTime.fromMillisecondsSinceEpoch(
+                  (map['runningSince'] as num).toInt()))
+          : null,
+
       originalSubscriptionId: map['originalSubscriptionId'] as String?,
       savedDailySpent: map['savedDailySpent'] as int?,
       savedElapsedMinutes: map['savedElapsedMinutes'] as int?,
@@ -559,7 +636,7 @@ class Session {
 }
 
 /// ---------------- CartItem ----------------
-class CartItem {
+/*class CartItem {
   final String id;
   final Product product;
   int qty;
@@ -567,8 +644,7 @@ class CartItem {
   CartItem({required this.id, required this.product, required this.qty});
 
   double get total => product.price * qty; // السعر محسوب تلقائياً
-}
-
+}*/
 
 ///========================Customer====================
 class Customer {
@@ -608,10 +684,9 @@ class CustomerBalance {
     return CustomerBalance(
       customerId: map['customerId'] as String,
       balance: (map['balance'] as num).toDouble(),
-      updatedAt:
-          map['updatedAt'] != null
-              ? DateTime.parse(map['updatedAt'] as String)
-              : DateTime.now(),
+      updatedAt: map['updatedAt'] != null
+          ? DateTime.parse(map['updatedAt'] as String)
+          : DateTime.now(),
     );
   }
 
